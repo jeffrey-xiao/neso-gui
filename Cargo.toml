@@ -6,6 +6,6 @@ edition = "2018"
 
 [dependencies]
 clap = "2.32"
-neso = { path = "../neso-rs" }
+neso = "0.3.0"
 sdl2 = "0.31.0"
 simplelog = "0.5.3"
