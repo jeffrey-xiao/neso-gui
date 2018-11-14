@@ -13,4 +13,4 @@ before_script:
 script:
   - cargo +nightly clippy --all-targets --features sdl2
   - cargo +nightly fmt --verbose --all -- --check
-  - cargo build --verbose --lib
+  - cargo build --verbose --all
