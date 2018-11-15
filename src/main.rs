@@ -297,8 +297,9 @@ pub fn main() {
         canvas.present();
 
         let elapsed = start.elapsed();
-        if mus_per_frame > elapsed {
-            thread::sleep(mus_per_frame - elapsed);
-        }
+        println!("{:?}", elapsed);
+        // if mus_per_frame > elapsed {
+        //     thread::sleep(mus_per_frame - elapsed);
+        // }
     }
 }
