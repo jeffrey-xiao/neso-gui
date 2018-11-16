@@ -1,7 +1,11 @@
+#[macro_use]
 extern crate clap;
 extern crate neso;
 extern crate sdl2;
 extern crate simplelog;
+#[macro_use]
+extern crate serde_derive;
+extern crate toml;
 
 use clap::{App, Arg};
 use neso::Nes;
@@ -11,11 +15,9 @@ use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::rect::Rect;
 use simplelog::{CombinedLogger, Config, Level, LevelFilter, TermLogger};
-use std::fs;
-use std::ptr;
-use std::slice;
-use std::thread;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
+use std::{error, fmt, fs, process, ptr, result, slice, thread};
 
 const KEYS: [Keycode; 8] = [
     Keycode::Q,
@@ -28,7 +30,71 @@ const KEYS: [Keycode; 8] = [
     Keycode::Right,
 ];
 
-pub fn main() {
+#[derive(Debug)]
+pub struct Error {
+    context: String,
+    description: String,
+    details: String,
+}
+
+impl Error {
+    pub fn new<T, U>(context: T, error: &U) -> Self
+    where
+        T: Into<String>,
+        U: error::Error,
+    {
+        Error {
+            context: context.into(),
+            description: error.description().into(),
+            details: error.to_string(),
+        }
+    }
+
+    pub fn from_description<T, U>(context: T, details: U) -> Self
+    where
+        T: Into<String>,
+        U: Into<String>,
+    {
+        Error {
+            context: context.into(),
+            description: "a custom error".into(),
+            details: details.into(),
+        }
+    }
+}
+
+impl error::Error for Error {
+    fn description(&self) -> &str {
+        &self.description
+    }
+
+    fn cause(&self) -> Option<&error::Error> {
+        None
+    }
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Error in {} - {}", self.context, self.details)
+    }
+}
+
+pub type Result<T> = result::Result<T, Error>;
+
+fn get_config_path(config_path_opt: Option<&str>) -> PathBuf {
+    match config_path_opt {
+        Some(config_path) => PathBuf::from(config_path),
+        None => {
+            let xdg_config_home = option_env!("XDG_CONFIG_HOME");
+            let config_home_dir = format!("{}/{}", env!("HOME"), ".config");
+            Path::new(xdg_config_home.unwrap_or(&config_home_dir))
+                .join(env!("CARGO_PKG_NAME"))
+                .join(format!("{}.toml", env!("CARGO_PKG_NAME")))
+        }
+    }
+}
+
+fn run() -> Result<()> {
     let logger_config = Config {
         time: Some(Level::Debug),
         level: Some(Level::Debug),
@@ -36,10 +102,10 @@ pub fn main() {
         location: None,
         time_format: None,
     };
-    CombinedLogger::init(vec![
-        TermLogger::new(LevelFilter::Debug, logger_config).unwrap()
-    ])
-    .unwrap();
+    let term_logger = TermLogger::new(LevelFilter::Debug, logger_config).ok_or(
+        Error::from_description("setting up logger", "Could not create `TermLogger`."),
+    )?;
+    CombinedLogger::init(vec![term_logger]).map_err(|err| Error::new("setting up logger", &err))?;
 
     let matches = App::new("neso-gui")
         .version(env!("CARGO_PKG_VERSION"))
@@ -50,6 +116,13 @@ pub fn main() {
                 .help("Path to rom.")
                 .index(1)
                 .required(true),
+        )
+        .arg(
+            Arg::with_name("config")
+                .help("Path to configuration file.")
+                .takes_value(true)
+                .short("c")
+                .long("config"),
         )
         .arg(
             Arg::with_name("debug")
@@ -67,31 +140,42 @@ pub fn main() {
         .get_matches();
 
     let debug_enabled = matches.is_present("debug");
-    let rom_path = matches.value_of("rom-path").unwrap();
+    let rom_path = matches
+        .value_of("rom-path")
+        .expect("Expected `rom-path` to exist.");
+    let config_path = get_config_path(matches.value_of("config"));
 
     let mus_per_frame = Duration::from_micros((1.0f64 / 60.0 * 1e6).round() as u64);
-    let buffer = fs::read(rom_path).unwrap();
+    let buffer = fs::read(rom_path).map_err(|err| Error::new("reading ROM", &err))?;
     let mut nes = Nes::new();
     nes.load_rom(&buffer);
 
-    let sdl_context = sdl2::init().unwrap();
-    let video_subsystem = sdl_context.video().unwrap();
-    let audio_subsystem = sdl_context.audio().unwrap();
+    let sdl_context =
+        sdl2::init().map_err(|err| Error::from_description("initializing `sdl2`", err))?;
+    let video_subsystem = sdl_context
+        .video()
+        .map_err(|err| Error::from_description("initializing `sdl2` video subsystem", err))?;
+    let audio_subsystem = sdl_context
+        .audio()
+        .map_err(|err| Error::from_description("initializing `sdl2` audio subsystem", err))?;
 
     let window_dimensions = if debug_enabled {
-        (1000, 800)
+        (960, 736)
     } else {
         (480, 512)
     };
+
     let window = video_subsystem
         .window("neso-gui", window_dimensions.0, window_dimensions.1)
         .position_centered()
         .opengl()
         .build()
-        .unwrap();
-    let mut canvas = window.into_canvas().build().unwrap();
+        .map_err(|err| Error::new("building window", &err))?;
+    let mut canvas = window
+        .into_canvas()
+        .build()
+        .map_err(|err| Error::new("building canvas", &err))?;
     let texture_creator = canvas.texture_creator();
-    canvas.present();
 
     let desired_spec = AudioSpecDesired {
         freq: Some(44_100),
@@ -100,10 +184,14 @@ pub fn main() {
     };
     let device = audio_subsystem
         .open_queue::<f32, _>(None, &desired_spec)
-        .unwrap();
+        .map_err(|err| Error::from_description("opening audio queue", err))?;
+
+    canvas.present();
     device.resume();
 
-    let mut event_pump = sdl_context.event_pump().unwrap();
+    let mut event_pump = sdl_context
+        .event_pump()
+        .map_err(|err| Error::from_description("obtaining `sdl` event pump", err))?;
 
     if let Some(frames) = matches.value_of("frames") {
         for _ in 0..frames.parse().unwrap() {
@@ -145,12 +233,14 @@ pub fn main() {
                 _ => {},
             }
         }
+
         if matches.value_of("frames").is_none() {
             nes.step_frame();
         }
+
         let buffer_len = nes.audio_buffer_len();
         let slice = unsafe { slice::from_raw_parts(nes.audio_buffer(), buffer_len) };
-        device.queue(&slice[0..buffer_len]);
+        device.queue(&slice[..]);
         canvas.clear();
         let mut texture = texture_creator
             .create_texture_streaming(PixelFormatEnum::ABGR8888, 256, 240)
@@ -289,7 +379,7 @@ pub fn main() {
                 .copy(
                     &texture,
                     None,
-                    Some(Rect::new(240 * 2, 256 * 2, 160 * 2, 20 * 2)),
+                    Some(Rect::new(256 * 2, 256 * 2, 160 * 2, 20 * 2)),
                 )
                 .unwrap();
         }
@@ -297,9 +387,16 @@ pub fn main() {
         canvas.present();
 
         let elapsed = start.elapsed();
-        println!("{:?}", elapsed);
-        // if mus_per_frame > elapsed {
-        //     thread::sleep(mus_per_frame - elapsed);
-        // }
+        if mus_per_frame > elapsed {
+            thread::sleep(mus_per_frame - elapsed);
+        }
+    }
+    Ok(())
+}
+
+pub fn main() {
+    if let Err(err) = run() {
+        println!("{}", err);
+        process::exit(1);
     }
 }
