@@ -1,5 +1,5 @@
 use sdl2::keyboard::Keycode;
-use serde::de::{self, Deserialize, Deserializer, Error, SeqAccess, Unexpected, Visitor};
+use serde::de::{Deserialize, Deserializer, Error, SeqAccess, Unexpected, Visitor};
 use std::collections::HashMap;
 use std::fmt;
 use std::fs;
@@ -151,8 +151,9 @@ impl Default for ControllerConfig {
 }
 
 pub struct KeybindingsConfig {
-    pub reset: Vec<Keycode>,
     pub exit: Vec<Keycode>,
+    pub mute: Vec<Keycode>,
+    pub reset: Vec<Keycode>,
 }
 
 impl<'de> Deserialize<'de> for KeybindingsConfig {
@@ -165,8 +166,9 @@ impl<'de> Deserialize<'de> for KeybindingsConfig {
 
         for entry in raw_keycode_config.0 {
             match entry.0.as_ref() {
-                "reset" => keybindings_config.reset = (entry.1).0,
                 "exit" => keybindings_config.exit = (entry.1).0,
+                "mute" => keybindings_config.mute = (entry.1).0,
+                "reset" => keybindings_config.reset = (entry.1).0,
                 _ => {
                     return Err(Error::invalid_value(
                         Unexpected::Str(&entry.0),
@@ -184,6 +186,7 @@ impl Default for KeybindingsConfig {
     fn default() -> Self {
         KeybindingsConfig {
             reset: vec![Keycode::R],
+            mute: vec![Keycode::M],
             exit: vec![Keycode::Escape],
         }
     }
@@ -254,6 +257,16 @@ pub fn parse_config<P>(config_path: P) -> super::Result<Config>
 where
     P: AsRef<Path>,
 {
+    let mut config = Config {
+        data_path: get_default_data_path(),
+        keybindings_config: KeybindingsConfig::default(),
+        controller_configs: [ControllerConfig::default(), ControllerConfig::default()],
+    };
+
+    if !config_path.as_ref().exists() {
+        return Ok(config);
+    }
+
     let config_file_buffer =
         fs::read(&config_path).map_err(|err| super::Error::new("reading config", &err))?;
     let toml_value = str::from_utf8(&config_file_buffer)
@@ -262,11 +275,6 @@ where
         .map_err(|err| super::Error::new("parsing config", &err))?;
     let toml_table = parse_table(toml_value, "Expected table at root of config.")?;
 
-    let mut config = Config {
-        data_path: get_default_data_path(),
-        keybindings_config: KeybindingsConfig::default(),
-        controller_configs: [ControllerConfig::default(), ControllerConfig::default()],
-    };
     for toml_entry in toml_table {
         let (toml_key, toml_value) = toml_entry;
         match toml_key.as_ref() {

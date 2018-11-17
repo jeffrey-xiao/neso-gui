@@ -4,7 +4,6 @@ extern crate sdl2;
 #[macro_use]
 extern crate log;
 extern crate simplelog;
-#[macro_use]
 extern crate serde_derive;
 extern crate toml;
 
@@ -14,9 +13,10 @@ use clap::{App, Arg};
 use neso::Nes;
 use sdl2::audio::AudioSpecDesired;
 use sdl2::event::Event;
-use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::rect::Rect;
+use sdl2::render::{Texture, TextureCreator};
+use sdl2::video::WindowContext;
 use simplelog::{CombinedLogger, Config, Level, LevelFilter, TermLogger};
 use std::time::{Duration, Instant};
 use std::{error, fmt, fs, process, ptr, result, slice, thread};
@@ -72,6 +72,84 @@ impl fmt::Display for Error {
 
 pub type Result<T> = result::Result<T, Error>;
 
+fn get_pattern_table_texture<'a>(
+    texture_creator: &'a TextureCreator<WindowContext>,
+    chr_banks: &[&[u8]],
+    offset: usize,
+) -> Result<Texture<'a>> {
+    let mut texture = texture_creator
+        .create_texture_streaming(PixelFormatEnum::RGB24, 128, 128)
+        .map_err(|err| Error::new("creating pattern table texture", &err))?;
+    texture
+        .with_lock(None, |buffer: &mut [u8], _pitch: usize| {
+            for row in 0..16 {
+                for i in 0..8 {
+                    for col in 0..16 {
+                        let byte_index = (row * 16 * 8 + col * 8) * 2 + i + offset;
+                        for j in 0..8 {
+                            let bank_index = byte_index / 0x400;
+                            let bank_offset = byte_index % 0x400;
+                            let val = (chr_banks[bank_index][bank_offset] >> (7 - j)) & 0x01
+                                | ((chr_banks[bank_index][bank_offset + 8] >> (7 - j)) & 0x01) << 1;
+                            let val = match val {
+                                0 => 255,
+                                1 => 200,
+                                2 => 150,
+                                3 => 100,
+                                _ => panic!("Should never happen."),
+                            };
+                            let buffer_index = (row * 16 * 8 * 8 + i * 16 * 8 + col * 8 + j) * 3;
+                            buffer[buffer_index] = val;
+                            buffer[buffer_index + 1] = val;
+                            buffer[buffer_index + 2] = val;
+                        }
+                    }
+                }
+            }
+        })
+        .map_err(|err| Error::from_description("locking pattern table texture", err))?;
+    Ok(texture)
+}
+
+fn get_nametable_texture<'a>(
+    texture_creator: &'a TextureCreator<WindowContext>,
+    chr_banks: &[&[u8]],
+    nametable_bank: &[u8],
+) -> Result<Texture<'a>> {
+    let mut texture = texture_creator
+        .create_texture_streaming(PixelFormatEnum::RGB24, 256, 240)
+        .map_err(|err| Error::new("creating pattern table texture", &err))?;
+    texture
+        .with_lock(None, |buffer: &mut [u8], _pitch: usize| {
+            for row in 0..30 {
+                for i in 0..8 {
+                    for col in 0..32 {
+                        let byte_index = (nametable_bank[row * 32 + col] as usize) * 16 + i;
+                        for j in 0..8 {
+                            let bank_index = byte_index / 0x400;
+                            let bank_offset = byte_index % 0x400;
+                            let val = (chr_banks[bank_index][bank_offset] >> (7 - j)) & 0x01
+                                | (chr_banks[bank_index][bank_offset + 8] >> (7 - j) & 0x01) << 1;
+                            let val = match val {
+                                0 => 255,
+                                1 => 200,
+                                2 => 150,
+                                3 => 100,
+                                _ => panic!("Should never happen."),
+                            };
+                            let buffer_index = (row * 8 * 32 * 8 + i * 32 * 8 + col * 8 + j) * 3;
+                            buffer[buffer_index] = val;
+                            buffer[buffer_index + 1] = val;
+                            buffer[buffer_index + 2] = val;
+                        }
+                    }
+                }
+            }
+        })
+        .map_err(|err| Error::from_description("locking nametable texture", err))?;
+    Ok(texture)
+}
+
 fn run() -> Result<()> {
     let logger_config = Config {
         time: Some(Level::Error),
@@ -123,11 +201,11 @@ fn run() -> Result<()> {
         .expect("Expected `rom-path` to exist.");
     let config_path = config::get_config_path(matches.value_of("config"));
     let config = config::parse_config(config_path)?;
+    let mut is_muted = false;
 
     let mus_per_frame = Duration::from_micros((1.0f64 / 60.0 * 1e6).round() as u64);
-    let buffer = fs::read(rom_path).map_err(|err| Error::new("reading ROM", &err))?;
     let mut nes = Nes::new();
-    nes.load_rom(&buffer);
+    nes.load_rom(&fs::read(rom_path).map_err(|err| Error::new("reading ROM", &err))?);
 
     let sdl_context =
         sdl2::init().map_err(|err| Error::from_description("initializing `sdl2`", err))?;
@@ -161,12 +239,12 @@ fn run() -> Result<()> {
         channels: Some(1),
         samples: Some(1024),
     };
-    let device = audio_subsystem
+    let audio_queue = audio_subsystem
         .open_queue::<f32, _>(None, &desired_spec)
         .map_err(|err| Error::from_description("opening audio queue", err))?;
 
     canvas.present();
-    device.resume();
+    audio_queue.resume();
 
     let mut event_pump = sdl_context
         .event_pump()
@@ -202,6 +280,10 @@ fn run() -> Result<()> {
                     if config.keybindings_config.exit.contains(&keycode) {
                         break 'running;
                     }
+
+                    if config.keybindings_config.mute.contains(&keycode) {
+                        is_muted = true;
+                    }
                 },
                 Event::KeyUp {
                     keycode: Some(keycode),
@@ -221,9 +303,12 @@ fn run() -> Result<()> {
             nes.step_frame();
         }
 
-        let buffer_len = nes.audio_buffer_len();
-        let slice = unsafe { slice::from_raw_parts(nes.audio_buffer(), buffer_len) };
-        device.queue(&slice[..]);
+        if !is_muted {
+            let buffer_len = nes.audio_buffer_len();
+            let slice = unsafe { slice::from_raw_parts(nes.audio_buffer(), buffer_len) };
+            audio_queue.queue(&slice[..]);
+        }
+
         canvas.clear();
         let mut texture = texture_creator
             .create_texture_streaming(PixelFormatEnum::ABGR8888, 256, 240)
@@ -243,108 +328,48 @@ fn run() -> Result<()> {
             .copy(&texture, None, Some(Rect::new(0, 0, 240 * 2, 256 * 2)))
             .unwrap();
         if debug_enabled {
-            let mut pattern_table = Vec::with_capacity(512);
-            for i in 0..8 {
-                let chr_bank = unsafe { slice::from_raw_parts(nes.chr_bank(i), 0x400) };
-                for j in 0..64 {
-                    let mut tile = [0; 64];
-                    for index in 0..8 {
-                        let byte = chr_bank[j * 16 + index];
-                        for y in 0..8 {
-                            tile[index as usize * 8 + 7 - y] |=
-                                if byte & 1 << y != 0 { 1 } else { 0 };
-                        }
-                    }
-                    for index in 0..8 {
-                        let byte = chr_bank[j * 16 + index + 8];
-                        for y in 0..8 {
-                            tile[index as usize * 8 + 7 - y] |=
-                                if byte & 1 << y != 0 { 2 } else { 0 };
-                        }
-                    }
-                    pattern_table.push(tile);
-                }
+            let palette = unsafe { slice::from_raw_parts(nes.palettes(), 32) };
+            let mut chr_banks = Vec::with_capacity(8);
+            for bank_index in 0..8 {
+                chr_banks.push(unsafe { slice::from_raw_parts(nes.chr_bank(bank_index), 0x400) });
             }
-            for nametable in 0..4 {
+
+            for bank_index in 0..4 {
                 let nametable_bank =
-                    unsafe { slice::from_raw_parts(nes.nametable_bank(nametable), 0x800) };
-                let mut texture = texture_creator
-                    .create_texture_streaming(PixelFormatEnum::RGB24, 256, 240)
-                    .unwrap();
-                texture
-                    .with_lock(None, |buffer: &mut [u8], _pitch: usize| {
-                        for i in 0..30usize {
-                            for j in 0..32usize {
-                                let index = nametable_bank[i * 32 + j] as usize
-                                    + nes.background_chr_bank() * 64;
-                                for x in 0..8usize {
-                                    for y in 0..8usize {
-                                        let offset = ((i * 8 + x) * 256 + j * 8 + y) * 3;
-                                        let val = match pattern_table[index][x * 8 + y] {
-                                            0 => 255,
-                                            1 => 200,
-                                            2 => 150,
-                                            3 => 100,
-                                            _ => panic!("ERROR"),
-                                        };
-                                        buffer[offset] = val;
-                                        buffer[offset + 1] = val;
-                                        buffer[offset + 2] = val;
-                                    }
-                                }
-                            }
-                        }
-                    })
-                    .unwrap();
+                    unsafe { slice::from_raw_parts(nes.nametable_bank(bank_index), 0x800) };
                 canvas
                     .copy(
-                        &texture,
+                        &get_nametable_texture(&texture_creator, &chr_banks[4..], nametable_bank)?,
                         None,
                         Some(Rect::new(
-                            240 * 2 + 240 * (nametable as i32 % 2),
-                            256 * (nametable as i32 / 2),
+                            240 * 2 + 240 * (bank_index as i32 % 2),
+                            256 * (bank_index as i32 / 2),
                             240,
                             256,
                         )),
                     )
-                    .unwrap();
+                    .map_err(|err| Error::from_description("copying texture to canvas", err))?;
             }
-            let mut texture = texture_creator
-                .create_texture_streaming(PixelFormatEnum::RGB24, 256, 128)
-                .unwrap();
-            texture
-                .with_lock(None, |buffer: &mut [u8], _pitch: usize| {
-                    for i in 0..16usize {
-                        for j in 0..32usize {
-                            for x in 0..8usize {
-                                for y in 0..8usize {
-                                    let row = (i * 2) % 16 + j / 16;
-                                    let col = if i < 8 { j % 16 } else { j % 16 + 16 };
-                                    let offset = ((row * 8 + x) * 256 + col * 8 + y) * 3;
-                                    let val = match pattern_table[i * 32 + j][x * 8 + y] {
-                                        0 => 255,
-                                        1 => 200,
-                                        2 => 150,
-                                        3 => 100,
-                                        _ => panic!("ERROR"),
-                                    };
-                                    buffer[offset] = val;
-                                    buffer[offset + 1] = val;
-                                    buffer[offset + 2] = val;
-                                }
-                            }
-                        }
-                    }
-                })
-                .unwrap();
-            canvas
-                .copy(
-                    &texture,
-                    None,
-                    Some(Rect::new(0, 256 * 2, 256 * 2, 128 * 2)),
-                )
-                .unwrap();
-            let palette = unsafe { slice::from_raw_parts(nes.palettes(), 32) };
+
+            for table_index in 0..2 {
+                canvas
+                    .copy(
+                        &get_pattern_table_texture(
+                            &texture_creator,
+                            &chr_banks,
+                            table_index * 0x1000,
+                        )?,
+                        None,
+                        Some(Rect::new(
+                            table_index as i32 * 256,
+                            256 * 2,
+                            128 * 2,
+                            128 * 2,
+                        )),
+                    )
+                    .map_err(|err| Error::from_description("copying texture to canvas", err))?;
+            }
+
             let mut texture = texture_creator
                 .create_texture_streaming(PixelFormatEnum::RGB24, 16, 2)
                 .unwrap();
