@@ -184,11 +184,7 @@ fn run() -> Result<()> {
         let start = Instant::now();
         for event in event_pump.poll_iter() {
             match event {
-                Event::Quit { .. }
-                | Event::KeyDown {
-                    keycode: Some(Keycode::Escape),
-                    ..
-                } => break 'running,
+                Event::Quit { .. } => break 'running,
                 Event::KeyDown {
                     keycode: Some(keycode),
                     ..
@@ -197,6 +193,14 @@ fn run() -> Result<()> {
                         if let Some(index) = controller_config.keycode_map.get(&keycode) {
                             nes.press_button(port, *index as u8);
                         }
+                    }
+
+                    if config.keybindings_config.reset.contains(&keycode) {
+                        nes.reset();
+                    }
+
+                    if config.keybindings_config.exit.contains(&keycode) {
+                        break 'running;
                     }
                 },
                 Event::KeyUp {

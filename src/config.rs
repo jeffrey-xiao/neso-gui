@@ -10,6 +10,65 @@ use toml::{value, Value};
 
 const CONTROLLER_FIELDS: [&str; 8] = ["a", "b", "select", "start", "up", "down", "left", "right"];
 
+struct KeycodeValues(Vec<Keycode>);
+struct KeycodeValuesVisitor(PhantomData<KeycodeValues>);
+
+impl<'de> Visitor<'de> for KeycodeValuesVisitor {
+    type Value = KeycodeValues;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("keycode string or list of keycode strings")
+    }
+
+    fn visit_str<E>(self, keycode_name: &str) -> Result<Self::Value, E>
+    where
+        E: Error,
+    {
+        let keycode = Keycode::from_name(keycode_name).ok_or(E::invalid_value(
+            Unexpected::Str(keycode_name),
+            &"a string as a keycode name.",
+        ))?;
+        Ok(KeycodeValues(vec![keycode]))
+    }
+
+    fn visit_seq<S>(self, mut visitor: S) -> Result<Self::Value, S::Error>
+    where
+        S: SeqAccess<'de>,
+    {
+        let mut value = visitor.next_element::<String>()?;
+        let mut keycodes = Vec::new();
+        while let Some(keycode_name) = value {
+            let keycode = Keycode::from_name(&keycode_name).ok_or(S::Error::invalid_value(
+                Unexpected::Str(&keycode_name),
+                &"a string as a keycode name.",
+            ))?;
+            keycodes.push(keycode);
+            value = visitor.next_element::<String>()?;
+        }
+        Ok(KeycodeValues(keycodes))
+    }
+}
+
+impl<'de> Deserialize<'de> for KeycodeValues {
+    fn deserialize<D>(deserializer: D) -> Result<KeycodeValues, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(KeycodeValuesVisitor(PhantomData))
+    }
+}
+
+struct RawKeycodeConfig(HashMap<String, KeycodeValues>);
+
+impl<'de> Deserialize<'de> for RawKeycodeConfig {
+    fn deserialize<D>(deserializer: D) -> Result<RawKeycodeConfig, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(RawKeycodeConfig(Deserialize::deserialize(deserializer)?))
+    }
+}
+
 pub struct ControllerConfig {
     pub keycode_map: HashMap<Keycode, usize>,
 }
@@ -25,105 +84,37 @@ impl<'de> Deserialize<'de> for ControllerConfig {
     where
         D: Deserializer<'de>,
     {
-        struct KeycodeValues(Vec<Keycode>);
-        struct KeycodeValuesVisitor(PhantomData<KeycodeValues>);
+        let mut controller_config = ControllerConfig::new(HashMap::new());
 
-        impl<'de> Visitor<'de> for KeycodeValuesVisitor {
-            type Value = KeycodeValues;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("keycode string or list of keycode strings")
-            }
-
-            fn visit_str<E>(self, keycode_name: &str) -> Result<Self::Value, E>
-            where
-                E: Error,
-            {
-                let keycode = Keycode::from_name(keycode_name).ok_or(E::invalid_value(
-                    Unexpected::Str(keycode_name),
-                    &"a string as a keycode name.",
-                ))?;
-                Ok(KeycodeValues(vec![keycode]))
-            }
-
-            fn visit_seq<S>(self, mut visitor: S) -> Result<Self::Value, S::Error>
-            where
-                S: SeqAccess<'de>,
-            {
-                let mut value = visitor.next_element::<String>()?;
-                let mut keycodes = Vec::new();
-                while let Some(keycode_name) = value {
-                    let keycode =
-                        Keycode::from_name(&keycode_name).ok_or(S::Error::invalid_value(
-                            Unexpected::Str(&keycode_name),
-                            &"a string as a keycode name.",
-                        ))?;
-                    keycodes.push(keycode);
-                    value = visitor.next_element::<String>()?;
-                }
-                Ok(KeycodeValues(keycodes))
-            }
-        }
-
-        impl<'de> Deserialize<'de> for KeycodeValues {
-            fn deserialize<D>(deserializer: D) -> Result<KeycodeValues, D::Error>
-            where
-                D: Deserializer<'de>,
-            {
-                deserializer.deserialize_any(KeycodeValuesVisitor(PhantomData))
-            }
-        }
-
-        struct RawControllerConfig(HashMap<String, KeycodeValues>);
-
-        impl Default for RawControllerConfig {
-            fn default() -> Self {
-                let map = vec![
-                    ("a".to_string(), KeycodeValues(vec![Keycode::P])),
-                    ("b".to_string(), KeycodeValues(vec![Keycode::O])),
-                    (
-                        "select".to_string(),
-                        KeycodeValues(vec![Keycode::LShift, Keycode::RShift]),
-                    ),
-                    ("start".to_string(), KeycodeValues(vec![Keycode::Return])),
-                    ("up".to_string(), KeycodeValues(vec![Keycode::W])),
-                    ("down".to_string(), KeycodeValues(vec![Keycode::S])),
-                    ("left".to_string(), KeycodeValues(vec![Keycode::A])),
-                    ("right".to_string(), KeycodeValues(vec![Keycode::D])),
-                ]
-                .into_iter()
-                .collect();
-
-                RawControllerConfig(map)
-            }
-        }
-
-        impl<'de> Deserialize<'de> for RawControllerConfig {
-            fn deserialize<D>(deserializer: D) -> Result<RawControllerConfig, D::Error>
-            where
-                D: Deserializer<'de>,
-            {
-                Ok(RawControllerConfig(Deserialize::deserialize(deserializer)?))
-            }
-        }
-
-        let mut keycode_map = HashMap::new();
-
-        let mut raw_controller_config = RawControllerConfig::default();
-        raw_controller_config.0.extend(
-            RawControllerConfig::deserialize(deserializer)?
-                .0
-                .into_iter(),
+        let mut raw_keycode_config = RawKeycodeConfig(
+            vec![
+                ("a".to_string(), KeycodeValues(vec![Keycode::P])),
+                ("b".to_string(), KeycodeValues(vec![Keycode::O])),
+                (
+                    "select".to_string(),
+                    KeycodeValues(vec![Keycode::LShift, Keycode::RShift]),
+                ),
+                ("start".to_string(), KeycodeValues(vec![Keycode::Return])),
+                ("up".to_string(), KeycodeValues(vec![Keycode::W])),
+                ("down".to_string(), KeycodeValues(vec![Keycode::S])),
+                ("left".to_string(), KeycodeValues(vec![Keycode::A])),
+                ("right".to_string(), KeycodeValues(vec![Keycode::D])),
+            ]
+            .into_iter()
+            .collect(),
         );
+        raw_keycode_config
+            .0
+            .extend(RawKeycodeConfig::deserialize(deserializer)?.0.into_iter());
 
-        for entry in raw_controller_config.0 {
+        for entry in raw_keycode_config.0 {
             match CONTROLLER_FIELDS
                 .iter()
                 .position(|field| **field == entry.0)
             {
                 Some(index) => {
                     for keycode in (entry.1).0 {
-                        keycode_map.insert(keycode, index);
+                        controller_config.keycode_map.insert(keycode, index);
                     }
                 },
                 None => {
@@ -135,7 +126,7 @@ impl<'de> Deserialize<'de> for ControllerConfig {
             }
         }
 
-        Ok(ControllerConfig::new(keycode_map))
+        Ok(controller_config)
     }
 }
 
@@ -159,8 +150,48 @@ impl Default for ControllerConfig {
     }
 }
 
+pub struct KeybindingsConfig {
+    pub reset: Vec<Keycode>,
+    pub exit: Vec<Keycode>,
+}
+
+impl<'de> Deserialize<'de> for KeybindingsConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let mut keybindings_config = KeybindingsConfig::default();
+        let raw_keycode_config = RawKeycodeConfig::deserialize(deserializer)?;
+
+        for entry in raw_keycode_config.0 {
+            match entry.0.as_ref() {
+                "reset" => keybindings_config.reset = (entry.1).0,
+                "exit" => keybindings_config.exit = (entry.1).0,
+                _ => {
+                    return Err(Error::invalid_value(
+                        Unexpected::Str(&entry.0),
+                        &"a valid controller field",
+                    ))
+                },
+            }
+        }
+
+        Ok(keybindings_config)
+    }
+}
+
+impl Default for KeybindingsConfig {
+    fn default() -> Self {
+        KeybindingsConfig {
+            reset: vec![Keycode::R],
+            exit: vec![Keycode::Escape],
+        }
+    }
+}
+
 pub struct Config {
     pub data_path: PathBuf,
+    pub keybindings_config: KeybindingsConfig,
     pub controller_configs: [ControllerConfig; 2],
 }
 
@@ -219,18 +250,6 @@ fn parse_general_config(config: &mut Config, toml_value: Value) -> super::Result
     Ok(())
 }
 
-fn parse_controller_config(
-    config: &mut Config,
-    toml_value: Value,
-    index: usize,
-) -> super::Result<()> {
-    let controller_config = toml_value
-        .try_into::<ControllerConfig>()
-        .map_err(|err| super::Error::new(format!("parsing port-{} config", index + 1), &err))?;
-    config.controller_configs[index] = controller_config;
-    Ok(())
-}
-
 pub fn parse_config<P>(config_path: P) -> super::Result<Config>
 where
     P: AsRef<Path>,
@@ -245,14 +264,29 @@ where
 
     let mut config = Config {
         data_path: get_default_data_path(),
+        keybindings_config: KeybindingsConfig::default(),
         controller_configs: [ControllerConfig::default(), ControllerConfig::default()],
     };
     for toml_entry in toml_table {
-        match toml_entry.0.as_ref() {
-            "general" => parse_general_config(&mut config, toml_entry.1)?,
-            "port-1" => parse_controller_config(&mut config, toml_entry.1, 0)?,
-            "port-2" => parse_controller_config(&mut config, toml_entry.1, 1)?,
-            _ => warn!("Unexpected value in root of config: {}.", toml_entry.0),
+        let (toml_key, toml_value) = toml_entry;
+        match toml_key.as_ref() {
+            "general" => parse_general_config(&mut config, toml_value)?,
+            "keybindings" => {
+                config.keybindings_config = toml_value
+                    .try_into::<KeybindingsConfig>()
+                    .map_err(|err| super::Error::new("parsing keybindings config", &err))?;
+            },
+            "port-1" => {
+                config.controller_configs[0] = toml_value
+                    .try_into::<ControllerConfig>()
+                    .map_err(|err| super::Error::new("parsing port-1 config", &err))?
+            },
+            "port-2" => {
+                config.controller_configs[0] = toml_value
+                    .try_into::<ControllerConfig>()
+                    .map_err(|err| super::Error::new("parsing port-2 config", &err))?
+            },
+            _ => warn!("Unexpected value in root of config: {}.", toml_key),
         }
     }
 
