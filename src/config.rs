@@ -24,10 +24,12 @@ impl<'de> Visitor<'de> for KeycodeValuesVisitor {
     where
         E: Error,
     {
-        let keycode = Keycode::from_name(keycode_name).ok_or(E::invalid_value(
-            Unexpected::Str(keycode_name),
-            &"a string as a keycode name.",
-        ))?;
+        let keycode = Keycode::from_name(keycode_name).ok_or_else(|| {
+            E::invalid_value(
+                Unexpected::Str(keycode_name),
+                &"a string as a keycode name.",
+            )
+        })?;
         Ok(KeycodeValues(vec![keycode]))
     }
 
@@ -38,10 +40,12 @@ impl<'de> Visitor<'de> for KeycodeValuesVisitor {
         let mut value = visitor.next_element::<String>()?;
         let mut keycodes = Vec::new();
         while let Some(keycode_name) = value {
-            let keycode = Keycode::from_name(&keycode_name).ok_or(S::Error::invalid_value(
-                Unexpected::Str(&keycode_name),
-                &"a string as a keycode name.",
-            ))?;
+            let keycode = Keycode::from_name(&keycode_name).ok_or_else(|| {
+                S::Error::invalid_value(
+                    Unexpected::Str(&keycode_name),
+                    &"a string as a keycode name.",
+                )
+            })?;
             keycodes.push(keycode);
             value = visitor.next_element::<String>()?;
         }
@@ -234,12 +238,13 @@ fn parse_general_config(config: &mut Config, toml_value: Value) -> super::Result
     for toml_entry in toml_table {
         match toml_entry.0.as_ref() {
             "data_path" => {
-                config.data_path =
-                    Path::new(toml_entry.1.as_str().ok_or(super::Error::from_description(
+                config.data_path = Path::new(toml_entry.1.as_str().ok_or_else(|| {
+                    super::Error::from_description(
                         "parsing config",
                         "Expected `data_path` to be a string.",
-                    ))?)
-                    .to_owned();
+                    )
+                })?)
+                .to_owned();
             },
             _ => {
                 return Err(super::Error::from_description(

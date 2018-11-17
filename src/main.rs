@@ -3,8 +3,8 @@ extern crate neso;
 extern crate sdl2;
 #[macro_use]
 extern crate log;
-extern crate simplelog;
 extern crate serde_derive;
+extern crate simplelog;
 extern crate toml;
 
 mod config;
@@ -158,9 +158,9 @@ fn run() -> Result<()> {
         location: None,
         time_format: None,
     };
-    let term_logger = TermLogger::new(LevelFilter::Debug, logger_config).ok_or(
-        Error::from_description("setting up logger", "Could not create `TermLogger`."),
-    )?;
+    let term_logger = TermLogger::new(LevelFilter::Debug, logger_config).ok_or_else(|| {
+        Error::from_description("setting up logger", "Could not create `TermLogger`.")
+    })?;
     CombinedLogger::init(vec![term_logger]).map_err(|err| Error::new("setting up logger", &err))?;
 
     let matches = App::new("neso-gui")
