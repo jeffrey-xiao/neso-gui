@@ -1,11 +1,14 @@
-#[macro_use]
 extern crate clap;
 extern crate neso;
 extern crate sdl2;
+#[macro_use]
+extern crate log;
 extern crate simplelog;
 #[macro_use]
 extern crate serde_derive;
 extern crate toml;
+
+mod config;
 
 use clap::{App, Arg};
 use neso::Nes;
@@ -15,20 +18,8 @@ use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::rect::Rect;
 use simplelog::{CombinedLogger, Config, Level, LevelFilter, TermLogger};
-use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use std::{error, fmt, fs, process, ptr, result, slice, thread};
-
-const KEYS: [Keycode; 8] = [
-    Keycode::Q,
-    Keycode::W,
-    Keycode::E,
-    Keycode::R,
-    Keycode::Up,
-    Keycode::Down,
-    Keycode::Left,
-    Keycode::Right,
-];
 
 #[derive(Debug)]
 pub struct Error {
@@ -81,23 +72,10 @@ impl fmt::Display for Error {
 
 pub type Result<T> = result::Result<T, Error>;
 
-fn get_config_path(config_path_opt: Option<&str>) -> PathBuf {
-    match config_path_opt {
-        Some(config_path) => PathBuf::from(config_path),
-        None => {
-            let xdg_config_home = option_env!("XDG_CONFIG_HOME");
-            let config_home_dir = format!("{}/{}", env!("HOME"), ".config");
-            Path::new(xdg_config_home.unwrap_or(&config_home_dir))
-                .join(env!("CARGO_PKG_NAME"))
-                .join(format!("{}.toml", env!("CARGO_PKG_NAME")))
-        }
-    }
-}
-
 fn run() -> Result<()> {
     let logger_config = Config {
-        time: Some(Level::Debug),
-        level: Some(Level::Debug),
+        time: Some(Level::Error),
+        level: Some(Level::Error),
         target: None,
         location: None,
         time_format: None,
@@ -143,7 +121,8 @@ fn run() -> Result<()> {
     let rom_path = matches
         .value_of("rom-path")
         .expect("Expected `rom-path` to exist.");
-    let config_path = get_config_path(matches.value_of("config"));
+    let config_path = config::get_config_path(matches.value_of("config"));
+    let config = config::parse_config(config_path)?;
 
     let mus_per_frame = Duration::from_micros((1.0f64 / 60.0 * 1e6).round() as u64);
     let buffer = fs::read(rom_path).map_err(|err| Error::new("reading ROM", &err))?;
@@ -214,20 +193,20 @@ fn run() -> Result<()> {
                     keycode: Some(keycode),
                     ..
                 } => {
-                    if let Some(index) = KEYS.iter().position(|key| *key == keycode) {
-                        nes.press_button(0, index as u8);
-                        nes.press_button(1, index as u8);
-                    } else if keycode == Keycode::T {
-                        nes.reset();
+                    for (port, controller_config) in config.controller_configs.iter().enumerate() {
+                        if let Some(index) = controller_config.keycode_map.get(&keycode) {
+                            nes.press_button(port, *index as u8);
+                        }
                     }
                 },
                 Event::KeyUp {
                     keycode: Some(keycode),
                     ..
                 } => {
-                    if let Some(index) = KEYS.iter().position(|key| *key == keycode) {
-                        nes.release_button(0, index as u8);
-                        nes.release_button(1, index as u8);
+                    for (port, controller_config) in config.controller_configs.iter().enumerate() {
+                        if let Some(index) = controller_config.keycode_map.get(&keycode) {
+                            nes.release_button(port, *index as u8);
+                        }
                     }
                 },
                 _ => {},
@@ -396,7 +375,7 @@ fn run() -> Result<()> {
 
 pub fn main() {
     if let Err(err) = run() {
-        println!("{}", err);
+        error!("{}", err);
         process::exit(1);
     }
 }
