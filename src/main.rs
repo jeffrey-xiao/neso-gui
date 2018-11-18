@@ -16,8 +16,9 @@ use sdl2::event::Event;
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::rect::Rect;
 use sdl2::render::{Texture, TextureCreator};
+use std::path::Path;
 use sdl2::video::WindowContext;
-use simplelog::{CombinedLogger, Config, Level, LevelFilter, TermLogger};
+use simplelog::{CombinedLogger, Level, LevelFilter, TermLogger};
 use std::time::{Duration, Instant};
 use std::{error, fmt, fs, process, ptr, result, slice, thread};
 
@@ -150,8 +151,62 @@ fn get_nametable_texture<'a>(
     Ok(texture)
 }
 
+fn save<P>(config: &config::Config, nes: &Nes, rom_path: P) -> Result<()>
+where
+    P: AsRef<Path>,
+{
+    let data = nes.save().map_err(|err| Error::new("getting save data", &err))?;
+    let save_file_path = config.get_save_file(rom_path);
+    if let Some(data) = data {
+        info!("[GUI] Writing save file at {:?}.", save_file_path);
+        fs::create_dir_all(&config.data_path).map_err(|err| Error::new("creating data directory: {}", &err))?;
+        fs::write(save_file_path, &data).map_err(|err| Error::new("writing save data", &err))?;
+    }
+    Ok(())
+}
+
+fn load<P>(config: &config::Config, nes: &mut Nes, rom_path: P) -> Result<()>
+where
+    P: AsRef<Path>,
+{
+    let save_file_path = config.get_save_file(rom_path);
+    if save_file_path.exists() {
+        info!("[GUI] Reading save file at {:?}.", save_file_path);
+        let data = fs::read(save_file_path).map_err(|err| Error::new("reading save data", &err))?;
+        nes.load(&data).map_err(|err| Error::new("loading save data", &err))?;
+    }
+    Ok(())
+}
+
+fn save_state<P>(config: &config::Config, nes: &Nes, rom_path: P) -> Result<()>
+where
+    P: AsRef<Path>,
+{
+    let data = nes.save_state().map_err(|err| Error::new("getting save state data", &err))?;
+    let save_state_file_path = config.get_save_state_file(rom_path);
+    info!("[GUI] Writing save state file at {:?}.", save_state_file_path);
+    fs::create_dir_all(&config.data_path).map_err(|err| Error::new("creating data directory: {}", &err))?;
+    fs::write(save_state_file_path, &data).map_err(|err| Error::new("writing save state data", &err))?;
+    Ok(())
+}
+
+fn load_state<P>(config: &config::Config, nes: &mut Nes, rom_path: P) -> Result<()>
+where
+    P: AsRef<Path>,
+{
+    let save_state_file_path = config.get_save_state_file(rom_path);
+    if save_state_file_path.exists() {
+        info!("[GUI] Reading save state file at {:?}.", save_state_file_path);
+        let data = fs::read(save_state_file_path).map_err(|err| Error::new("reading save state data", &err))?;
+        nes.load_state(&data).map_err(|err| Error::new("loading save state data", &err))?;
+    } else {
+        warn!("No save state exists for this ROM.");
+    }
+    Ok(())
+}
+
 fn run() -> Result<()> {
-    let logger_config = Config {
+    let logger_config = simplelog::Config {
         time: Some(Level::Error),
         level: Some(Level::Error),
         target: None,
@@ -200,12 +255,13 @@ fn run() -> Result<()> {
         .value_of("rom-path")
         .expect("Expected `rom-path` to exist.");
     let config_path = config::get_config_path(matches.value_of("config"));
-    let config = config::parse_config(config_path)?;
+    let config = config::Config::parse_config(config_path)?;
     let mut is_muted = false;
 
     let mus_per_frame = Duration::from_micros((1.0f64 / 60.0 * 1e6).round() as u64);
     let mut nes = Nes::new();
     nes.load_rom(&fs::read(rom_path).map_err(|err| Error::new("reading ROM", &err))?);
+    load(&config, &mut nes, &rom_path)?;
 
     let sdl_context =
         sdl2::init().map_err(|err| Error::from_description("initializing `sdl2`", err))?;
@@ -262,7 +318,10 @@ fn run() -> Result<()> {
         let start = Instant::now();
         for event in event_pump.poll_iter() {
             match event {
-                Event::Quit { .. } => break 'running,
+                Event::Quit { .. } => {
+                    save(&config, &nes, rom_path)?;
+                    break 'running;
+                }
                 Event::KeyDown {
                     keycode: Some(keycode),
                     ..
@@ -278,11 +337,20 @@ fn run() -> Result<()> {
                     }
 
                     if config.keybindings_config.exit.contains(&keycode) {
+                        save(&config, &nes, rom_path)?;
                         break 'running;
                     }
 
                     if config.keybindings_config.mute.contains(&keycode) {
-                        is_muted = true;
+                        is_muted = !is_muted;
+                    }
+
+                    if config.keybindings_config.save_state.contains(&keycode) {
+                        save_state(&config, &nes, rom_path)?;
+                    }
+
+                    if config.keybindings_config.load_state.contains(&keycode) {
+                        load_state(&config, &mut nes, rom_path)?;
                     }
                 },
                 Event::KeyUp {
@@ -306,7 +374,7 @@ fn run() -> Result<()> {
         if !is_muted {
             let buffer_len = nes.audio_buffer_len();
             let slice = unsafe { slice::from_raw_parts(nes.audio_buffer(), buffer_len) };
-            audio_queue.queue(&slice[..]);
+            audio_queue.queue(&slice[0..buffer_len]);
         }
 
         canvas.clear();

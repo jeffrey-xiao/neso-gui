@@ -154,10 +154,13 @@ impl Default for ControllerConfig {
     }
 }
 
+// TODO: Use macro to generate this.
 pub struct KeybindingsConfig {
     pub exit: Vec<Keycode>,
     pub mute: Vec<Keycode>,
     pub reset: Vec<Keycode>,
+    pub save_state: Vec<Keycode>,
+    pub load_state: Vec<Keycode>,
 }
 
 impl<'de> Deserialize<'de> for KeybindingsConfig {
@@ -173,6 +176,8 @@ impl<'de> Deserialize<'de> for KeybindingsConfig {
                 "exit" => keybindings_config.exit = (entry.1).0,
                 "mute" => keybindings_config.mute = (entry.1).0,
                 "reset" => keybindings_config.reset = (entry.1).0,
+                "save_state" => keybindings_config.save_state = (entry.1).0,
+                "load_state" => keybindings_config.load_state = (entry.1).0,
                 _ => {
                     return Err(Error::invalid_value(
                         Unexpected::Str(&entry.0),
@@ -192,29 +197,9 @@ impl Default for KeybindingsConfig {
             reset: vec![Keycode::R],
             mute: vec![Keycode::M],
             exit: vec![Keycode::Escape],
+            save_state: vec![Keycode::F1],
+            load_state: vec![Keycode::F2],
         }
-    }
-}
-
-pub struct Config {
-    pub data_path: PathBuf,
-    pub keybindings_config: KeybindingsConfig,
-    pub controller_configs: [ControllerConfig; 2],
-}
-
-pub fn get_config_path<P>(config_path_opt: Option<P>) -> PathBuf
-where
-    P: AsRef<Path>,
-{
-    match config_path_opt {
-        Some(config_path) => PathBuf::from(config_path.as_ref()),
-        None => {
-            let xdg_config_home = option_env!("XDG_CONFIG_HOME");
-            let config_home_dir = format!("{}/{}", env!("HOME"), ".config");
-            Path::new(xdg_config_home.unwrap_or(&config_home_dir))
-                .join(env!("CARGO_PKG_NAME"))
-                .join(format!("{}.toml", env!("CARGO_PKG_NAME")))
-        },
     }
 }
 
@@ -223,7 +208,6 @@ fn get_default_data_path() -> PathBuf {
     let config_home_dir = format!("{}/{}", env!("HOME"), ".local/share");
     Path::new(xdg_config_home.unwrap_or(&config_home_dir))
         .join(env!("CARGO_PKG_NAME"))
-        .join(format!("{}.toml", env!("CARGO_PKG_NAME")))
 }
 
 fn parse_table(toml_value: Value, details: &str) -> super::Result<value::Table> {
@@ -258,50 +242,90 @@ fn parse_general_config(config: &mut Config, toml_value: Value) -> super::Result
     Ok(())
 }
 
-pub fn parse_config<P>(config_path: P) -> super::Result<Config>
+pub fn get_config_path<P>(config_path_opt: Option<P>) -> PathBuf
 where
     P: AsRef<Path>,
 {
-    let mut config = Config {
-        data_path: get_default_data_path(),
-        keybindings_config: KeybindingsConfig::default(),
-        controller_configs: [ControllerConfig::default(), ControllerConfig::default()],
-    };
+    match config_path_opt {
+        Some(config_path) => PathBuf::from(config_path.as_ref()),
+        None => {
+            let xdg_config_home = option_env!("XDG_CONFIG_HOME");
+            let config_home_dir = format!("{}/{}", env!("HOME"), ".config");
+            Path::new(xdg_config_home.unwrap_or(&config_home_dir))
+                .join(env!("CARGO_PKG_NAME"))
+                .join(format!("{}.toml", env!("CARGO_PKG_NAME")))
+        },
+    }
+}
 
-    if !config_path.as_ref().exists() {
-        return Ok(config);
+pub struct Config {
+    pub data_path: PathBuf,
+    pub keybindings_config: KeybindingsConfig,
+    pub controller_configs: [ControllerConfig; 2],
+}
+
+impl Config {
+    pub fn get_save_file<P>(&self, rom_path: P) -> PathBuf
+    where
+        P: AsRef<Path>,
+    {
+        let save_file_name = rom_path.as_ref().with_extension("sav");
+        self.data_path.join(save_file_name.file_name().expect("Expected valid file name."))
     }
 
-    let config_file_buffer =
-        fs::read(&config_path).map_err(|err| super::Error::new("reading config", &err))?;
-    let toml_value = str::from_utf8(&config_file_buffer)
-        .map_err(|err| super::Error::new("reading config", &err))?
-        .parse::<toml::Value>()
-        .map_err(|err| super::Error::new("parsing config", &err))?;
-    let toml_table = parse_table(toml_value, "Expected table at root of config.")?;
+    pub fn get_save_state_file<P>(&self, rom_path: P) -> PathBuf
+    where
+        P: AsRef<Path>,
+    {
+        let save_state_file_name = rom_path.as_ref().with_extension("state");
+        self.data_path.join(save_state_file_name.file_name().expect("Expected valid file name."))
+    }
 
-    for toml_entry in toml_table {
-        let (toml_key, toml_value) = toml_entry;
-        match toml_key.as_ref() {
-            "general" => parse_general_config(&mut config, toml_value)?,
-            "keybindings" => {
-                config.keybindings_config = toml_value
-                    .try_into::<KeybindingsConfig>()
-                    .map_err(|err| super::Error::new("parsing keybindings config", &err))?;
-            },
-            "port-1" => {
-                config.controller_configs[0] = toml_value
-                    .try_into::<ControllerConfig>()
-                    .map_err(|err| super::Error::new("parsing port-1 config", &err))?
-            },
-            "port-2" => {
-                config.controller_configs[0] = toml_value
-                    .try_into::<ControllerConfig>()
-                    .map_err(|err| super::Error::new("parsing port-2 config", &err))?
-            },
-            _ => warn!("Unexpected value in root of config: {}.", toml_key),
+    pub fn parse_config<P>(config_path: P) -> super::Result<Config>
+    where
+        P: AsRef<Path>,
+    {
+        let mut config = Config {
+            data_path: get_default_data_path(),
+            keybindings_config: KeybindingsConfig::default(),
+            controller_configs: [ControllerConfig::default(), ControllerConfig::default()],
+        };
+
+        if !config_path.as_ref().exists() {
+            return Ok(config);
         }
-    }
 
-    Ok(config)
+        let config_file_buffer =
+            fs::read(&config_path).map_err(|err| super::Error::new("reading config", &err))?;
+        let toml_value = str::from_utf8(&config_file_buffer)
+            .map_err(|err| super::Error::new("reading config", &err))?
+            .parse::<toml::Value>()
+            .map_err(|err| super::Error::new("parsing config", &err))?;
+        let toml_table = parse_table(toml_value, "Expected table at root of config.")?;
+
+        for toml_entry in toml_table {
+            let (toml_key, toml_value) = toml_entry;
+            match toml_key.as_ref() {
+                "general" => parse_general_config(&mut config, toml_value)?,
+                "keybindings" => {
+                    config.keybindings_config = toml_value
+                        .try_into::<KeybindingsConfig>()
+                        .map_err(|err| super::Error::new("parsing keybindings config", &err))?;
+                },
+                "port-1" => {
+                    config.controller_configs[0] = toml_value
+                        .try_into::<ControllerConfig>()
+                        .map_err(|err| super::Error::new("parsing port-1 config", &err))?
+                },
+                "port-2" => {
+                    config.controller_configs[0] = toml_value
+                        .try_into::<ControllerConfig>()
+                        .map_err(|err| super::Error::new("parsing port-2 config", &err))?
+                },
+                _ => warn!("Unexpected value in root of config: {}.", toml_key),
+            }
+        }
+
+        Ok(config)
+    }
 }
