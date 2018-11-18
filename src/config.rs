@@ -206,8 +206,7 @@ impl Default for KeybindingsConfig {
 fn get_default_data_path() -> PathBuf {
     let xdg_config_home = option_env!("XDG_DATA_HOME");
     let config_home_dir = format!("{}/{}", env!("HOME"), ".local/share");
-    Path::new(xdg_config_home.unwrap_or(&config_home_dir))
-        .join(env!("CARGO_PKG_NAME"))
+    Path::new(xdg_config_home.unwrap_or(&config_home_dir)).join(env!("CARGO_PKG_NAME"))
 }
 
 fn parse_table(toml_value: Value, details: &str) -> super::Result<value::Table> {
@@ -270,7 +269,11 @@ impl Config {
         P: AsRef<Path>,
     {
         let save_file_name = rom_path.as_ref().with_extension("sav");
-        self.data_path.join(save_file_name.file_name().expect("Expected valid file name."))
+        self.data_path.join(
+            save_file_name
+                .file_name()
+                .expect("Expected valid file name."),
+        )
     }
 
     pub fn get_save_state_file<P>(&self, rom_path: P) -> PathBuf
@@ -278,7 +281,11 @@ impl Config {
         P: AsRef<Path>,
     {
         let save_state_file_name = rom_path.as_ref().with_extension("state");
-        self.data_path.join(save_state_file_name.file_name().expect("Expected valid file name."))
+        self.data_path.join(
+            save_state_file_name
+                .file_name()
+                .expect("Expected valid file name."),
+        )
     }
 
     pub fn parse_config<P>(config_path: P) -> super::Result<Config>

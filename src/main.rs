@@ -16,9 +16,9 @@ use sdl2::event::Event;
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::rect::Rect;
 use sdl2::render::{Texture, TextureCreator};
-use std::path::Path;
 use sdl2::video::WindowContext;
 use simplelog::{CombinedLogger, Level, LevelFilter, TermLogger};
+use std::path::Path;
 use std::time::{Duration, Instant};
 use std::{error, fmt, fs, process, ptr, result, slice, thread};
 
@@ -155,11 +155,14 @@ fn save<P>(config: &config::Config, nes: &Nes, rom_path: P) -> Result<()>
 where
     P: AsRef<Path>,
 {
-    let data = nes.save().map_err(|err| Error::new("getting save data", &err))?;
+    let data = nes
+        .save()
+        .map_err(|err| Error::new("getting save data", &err))?;
     let save_file_path = config.get_save_file(rom_path);
     if let Some(data) = data {
         info!("[GUI] Writing save file at {:?}.", save_file_path);
-        fs::create_dir_all(&config.data_path).map_err(|err| Error::new("creating data directory: {}", &err))?;
+        fs::create_dir_all(&config.data_path)
+            .map_err(|err| Error::new("creating data directory: {}", &err))?;
         fs::write(save_file_path, &data).map_err(|err| Error::new("writing save data", &err))?;
     }
     Ok(())
@@ -173,7 +176,8 @@ where
     if save_file_path.exists() {
         info!("[GUI] Reading save file at {:?}.", save_file_path);
         let data = fs::read(save_file_path).map_err(|err| Error::new("reading save data", &err))?;
-        nes.load(&data).map_err(|err| Error::new("loading save data", &err))?;
+        nes.load(&data)
+            .map_err(|err| Error::new("loading save data", &err))?;
     }
     Ok(())
 }
@@ -182,11 +186,18 @@ fn save_state<P>(config: &config::Config, nes: &Nes, rom_path: P) -> Result<()>
 where
     P: AsRef<Path>,
 {
-    let data = nes.save_state().map_err(|err| Error::new("getting save state data", &err))?;
+    let data = nes
+        .save_state()
+        .map_err(|err| Error::new("getting save state data", &err))?;
     let save_state_file_path = config.get_save_state_file(rom_path);
-    info!("[GUI] Writing save state file at {:?}.", save_state_file_path);
-    fs::create_dir_all(&config.data_path).map_err(|err| Error::new("creating data directory: {}", &err))?;
-    fs::write(save_state_file_path, &data).map_err(|err| Error::new("writing save state data", &err))?;
+    info!(
+        "[GUI] Writing save state file at {:?}.",
+        save_state_file_path
+    );
+    fs::create_dir_all(&config.data_path)
+        .map_err(|err| Error::new("creating data directory: {}", &err))?;
+    fs::write(save_state_file_path, &data)
+        .map_err(|err| Error::new("writing save state data", &err))?;
     Ok(())
 }
 
@@ -196,9 +207,14 @@ where
 {
     let save_state_file_path = config.get_save_state_file(rom_path);
     if save_state_file_path.exists() {
-        info!("[GUI] Reading save state file at {:?}.", save_state_file_path);
-        let data = fs::read(save_state_file_path).map_err(|err| Error::new("reading save state data", &err))?;
-        nes.load_state(&data).map_err(|err| Error::new("loading save state data", &err))?;
+        info!(
+            "[GUI] Reading save state file at {:?}.",
+            save_state_file_path
+        );
+        let data = fs::read(save_state_file_path)
+            .map_err(|err| Error::new("reading save state data", &err))?;
+        nes.load_state(&data)
+            .map_err(|err| Error::new("loading save state data", &err))?;
     } else {
         warn!("No save state exists for this ROM.");
     }
@@ -321,7 +337,7 @@ fn run() -> Result<()> {
                 Event::Quit { .. } => {
                     save(&config, &nes, rom_path)?;
                     break 'running;
-                }
+                },
                 Event::KeyDown {
                     keycode: Some(keycode),
                     ..
