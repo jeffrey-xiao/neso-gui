@@ -423,7 +423,11 @@ fn run() -> Result<()> {
                     unsafe { slice::from_raw_parts(nes.nametable_bank(bank_index), 0x800) };
                 canvas
                     .copy(
-                        &get_nametable_texture(&texture_creator, &chr_banks[4..], nametable_bank)?,
+                        &get_nametable_texture(
+                            &texture_creator,
+                            &chr_banks[nes.background_chr_bank()..],
+                            nametable_bank,
+                        )?,
                         None,
                         Some(Rect::new(
                             240 * 2 + 240 * (bank_index as i32 % 2),
