@@ -21,6 +21,18 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 use std::{error, fmt, fs, process, ptr, result, slice, thread};
 
+const SPEEDS: [f32; 9] = [
+    1.0 / 2.0,
+    1.0 / 1.75,
+    1.0 / 1.5,
+    1.0 / 1.25,
+    1.0,
+    1.25,
+    1.5,
+    1.75,
+    2.00,
+];
+
 #[derive(Debug)]
 pub struct Error {
     context: String,
@@ -142,6 +154,14 @@ where
     Ok(())
 }
 
+fn compute_mus_per_frame(speed_index: usize) -> Duration {
+    Duration::from_micros((1.0 / SPEEDS[speed_index] / 60.0 * 1e6).round() as u64)
+}
+
+fn compute_sample_freq(speed_index: usize) -> f32 {
+    44_100.0 / SPEEDS[speed_index]
+}
+
 fn run() -> Result<()> {
     let logger_config = simplelog::Config {
         time: Some(Level::Error),
@@ -194,9 +214,10 @@ fn run() -> Result<()> {
     let config_path = config::get_config_path(matches.value_of("config"));
     let config = config::Config::parse_config(config_path)?;
     let mut is_muted = false;
+    let mut speed_index = 4;
+    let mut mus_per_frame = compute_mus_per_frame(speed_index);
 
-    let mus_per_frame = Duration::from_micros((1.0f64 / 60.0 * 1e6).round() as u64);
-    let mut nes = Nes::new();
+    let mut nes = Nes::default();
     nes.load_rom(&fs::read(rom_path).map_err(|err| Error::new("reading ROM", &err))?);
     load(&config, &mut nes, &rom_path)?;
 
@@ -290,6 +311,7 @@ fn run() -> Result<()> {
 
                     if config.keybindings_config.mute.contains(&keycode) {
                         is_muted = !is_muted;
+                        info!("[GUI] Is muted: {}.", is_muted);
                     }
 
                     if config.keybindings_config.save_state.contains(&keycode) {
@@ -298,6 +320,24 @@ fn run() -> Result<()> {
 
                     if config.keybindings_config.load_state.contains(&keycode) {
                         load_state(&config, &mut nes, rom_path)?;
+                    }
+
+                    if config.keybindings_config.increase_speed.contains(&keycode)
+                        && speed_index < SPEEDS.len() - 1
+                    {
+                        speed_index += 1;
+                        info!("[GUI] Speed set to: {:.2}.", SPEEDS[speed_index]);
+                        mus_per_frame = compute_mus_per_frame(speed_index);
+                        nes.set_sample_freq(compute_sample_freq(speed_index))
+                    }
+
+                    if config.keybindings_config.decrease_speed.contains(&keycode)
+                        && speed_index > 0
+                    {
+                        speed_index -= 1;
+                        info!("[GUI] Speed set to: {:.2}.", SPEEDS[speed_index]);
+                        mus_per_frame = compute_mus_per_frame(speed_index);
+                        nes.set_sample_freq(compute_sample_freq(speed_index))
                     }
                 },
                 Event::KeyUp {

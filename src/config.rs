@@ -161,6 +161,8 @@ pub struct KeybindingsConfig {
     pub reset: Vec<Keycode>,
     pub save_state: Vec<Keycode>,
     pub load_state: Vec<Keycode>,
+    pub increase_speed: Vec<Keycode>,
+    pub decrease_speed: Vec<Keycode>,
 }
 
 impl<'de> Deserialize<'de> for KeybindingsConfig {
@@ -178,6 +180,8 @@ impl<'de> Deserialize<'de> for KeybindingsConfig {
                 "reset" => keybindings_config.reset = (entry.1).0,
                 "save_state" => keybindings_config.save_state = (entry.1).0,
                 "load_state" => keybindings_config.load_state = (entry.1).0,
+                "increase_speed" => keybindings_config.increase_speed = (entry.1).0,
+                "decrease_speed" => keybindings_config.decrease_speed = (entry.1).0,
                 _ => {
                     return Err(Error::invalid_value(
                         Unexpected::Str(&entry.0),
@@ -199,6 +203,8 @@ impl Default for KeybindingsConfig {
             exit: vec![Keycode::Escape],
             save_state: vec![Keycode::F1],
             load_state: vec![Keycode::F2],
+            increase_speed: vec![Keycode::RightBracket],
+            decrease_speed: vec![Keycode::LeftBracket],
         }
     }
 }
