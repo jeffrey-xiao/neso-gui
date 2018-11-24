@@ -14,7 +14,7 @@ use clap::{App, Arg};
 use neso::Nes;
 use sdl2::audio::AudioSpecDesired;
 use sdl2::event::Event;
-use sdl2::pixels::PixelFormatEnum;
+use sdl2::pixels::{Color, PixelFormatEnum};
 use sdl2::rect::Rect;
 use simplelog::{CombinedLogger, Level, LevelFilter, TermLogger};
 use std::path::Path;
@@ -170,7 +170,7 @@ fn run() -> Result<()> {
         location: None,
         time_format: None,
     };
-    let term_logger = TermLogger::new(LevelFilter::Debug, logger_config).ok_or_else(|| {
+    let term_logger = TermLogger::new(LevelFilter::Info, logger_config).ok_or_else(|| {
         Error::from_description("setting up logger", "Could not create `TermLogger`.")
     })?;
     CombinedLogger::init(vec![term_logger]).map_err(|err| Error::new("setting up logger", &err))?;
@@ -231,9 +231,9 @@ fn run() -> Result<()> {
         .map_err(|err| Error::from_description("initializing `sdl2` audio subsystem", err))?;
 
     let window_dimensions = if debug_enabled {
-        (960, 736)
+        (1024, 736)
     } else {
-        (480, 512)
+        (512, 480)
     };
 
     let window = video_subsystem
@@ -249,6 +249,7 @@ fn run() -> Result<()> {
         .map_err(|err| Error::new("building canvas", &err))?;
     let texture_creator = canvas.texture_creator();
     canvas.present();
+    canvas.set_draw_color(Color::RGB(255, 255, 255));
 
     let desired_spec = AudioSpecDesired {
         freq: Some(44_100),
@@ -272,15 +273,6 @@ fn run() -> Result<()> {
             nes.step_frame();
         }
     }
-
-    let colors = unsafe { slice::from_raw_parts(nes.colors(), 64) };
-    canvas
-        .copy(
-            &graphics::get_colors_texture(&texture_creator, &colors)?,
-            None,
-            Some(Rect::new(256 * 2, 256 * 2, 160 * 2, 20 * 4)),
-        )
-        .map_err(|err| Error::from_description("copying colors texture to canvas", err))?;
 
     'running: loop {
         let start = Instant::now();
@@ -320,6 +312,7 @@ fn run() -> Result<()> {
 
                     if config.keybindings_config.load_state.contains(&keycode) {
                         load_state(&config, &mut nes, rom_path)?;
+                        nes.set_sample_freq(compute_sample_freq(speed_index))
                     }
 
                     if config.keybindings_config.increase_speed.contains(&keycode)
@@ -373,17 +366,40 @@ fn run() -> Result<()> {
                     ptr::copy_nonoverlapping(
                         nes.image_buffer(),
                         buffer.as_mut_ptr(),
-                        256 * 240 * 4,
+                        240 * 256 * 4,
                     );
                 }
             })
             .map_err(|err| Error::from_description("locking output texture", err))?;
         canvas
-            .copy(&texture, None, Some(Rect::new(0, 0, 240 * 2, 256 * 2)))
+            .copy(&texture, None, Some(Rect::new(0, 0, 256 * 2, 240 * 2)))
             .map_err(|err| Error::from_description("copying output texture to canvas", err))?;
 
         if debug_enabled {
+            let colors = unsafe { slice::from_raw_parts(nes.colors(), 64) };
+            let colors_rect = Rect::new(512, 480, 16 * 16, 16 * 4);
+            canvas
+                .copy(
+                    &graphics::get_colors_texture(&texture_creator, &colors)?,
+                    None,
+                    Some(colors_rect),
+                )
+                .map_err(|err| Error::from_description("copying colors texture to canvas", err))?;
+            canvas
+                .draw_rect(colors_rect)
+                .map_err(|err| Error::from_description("drawing colors border", err))?;
+
             let palettes = unsafe { slice::from_raw_parts(nes.palettes(), 32) };
+            canvas
+                .copy(
+                    &graphics::get_palettes_texture(&texture_creator, &colors, &palettes)?,
+                    None,
+                    Some(Rect::new(512 + 16 * 16, 480, 16 * 16, 16 * 2)),
+                )
+                .map_err(|err| {
+                    Error::from_description("copying palettes texture to canvas", err)
+                })?;
+
             let mut chr_banks = Vec::with_capacity(8);
             for bank_index in 0..8 {
                 chr_banks.push(unsafe { slice::from_raw_parts(nes.chr_bank(bank_index), 0x400) });
@@ -396,15 +412,17 @@ fn run() -> Result<()> {
                     .copy(
                         &graphics::get_nametable_texture(
                             &texture_creator,
+                            colors,
+                            palettes,
                             &chr_banks[nes.background_chr_bank()..],
                             nametable_bank,
                         )?,
                         None,
                         Some(Rect::new(
-                            240 * 2 + 240 * (bank_index as i32 % 2),
-                            256 * (bank_index as i32 / 2),
-                            240,
+                            512 + 256 * (bank_index as i32 % 2),
+                            240 * (bank_index as i32 / 2),
                             256,
+                            240,
                         )),
                     )
                     .map_err(|err| {
@@ -421,27 +439,12 @@ fn run() -> Result<()> {
                             table_index * 0x1000,
                         )?,
                         None,
-                        Some(Rect::new(
-                            table_index as i32 * 256,
-                            256 * 2,
-                            128 * 2,
-                            128 * 2,
-                        )),
+                        Some(Rect::new(table_index as i32 * 256, 480, 256, 256)),
                     )
                     .map_err(|err| {
                         Error::from_description("copying pattern table texture to canvas", err)
                     })?;
             }
-
-            canvas
-                .copy(
-                    &graphics::get_palettes_texture(&texture_creator, &colors, &palettes)?,
-                    None,
-                    Some(Rect::new(256 * 2, 256 * 2 + 20 * 4, 160 * 2, 20 * 2)),
-                )
-                .map_err(|err| {
-                    Error::from_description("copying palettes texture to canvas", err)
-                })?;
         }
 
         canvas.present();
