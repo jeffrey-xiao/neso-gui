@@ -11,7 +11,7 @@ use toml::{value, Value};
 
 const CONTROLLER_FIELDS: [&str; 8] = ["a", "b", "select", "start", "up", "down", "left", "right"];
 
-#[derive(Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
 pub enum KeybindingValue {
     ButtonValue(Button),
     KeycodeValue(Keycode),

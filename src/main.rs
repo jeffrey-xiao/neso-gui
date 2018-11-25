@@ -211,11 +211,8 @@ impl EmulatorState {
     }
 
     fn handle_button_release(&mut self, keybinding_value: config::KeybindingValue) {
-        for (port, controller_config) in
-            self.config.controller_configs.iter().enumerate()
-        {
-            if let Some(index) = controller_config.keybinding_map.get(&keybinding_value)
-            {
+        for (port, controller_config) in self.config.controller_configs.iter().enumerate() {
+            if let Some(index) = controller_config.keybinding_map.get(&keybinding_value) {
                 self.nes.release_button(port, *index as u8);
             }
         }
@@ -353,16 +350,18 @@ fn run() -> Result<()> {
         nes: Nes::default(),
         config: config::Config::parse_config(config::get_config_path(matches.value_of("config")))?,
         rom_path: matches
-        .value_of("rom-path")
-        .expect("Expected `rom-path` to exist.")
-        .to_owned(),
+            .value_of("rom-path")
+            .expect("Expected `rom-path` to exist.")
+            .to_owned(),
         is_muted: false,
         is_paused: matches.value_of("frames").is_some(),
         is_running: true,
         debug_enabled: matches.is_present("debug"),
         speed_index: 4,
     };
-    state.nes.load_rom(&fs::read(&state.rom_path).map_err(|err| Error::new("reading ROM", &err))?);
+    state
+        .nes
+        .load_rom(&fs::read(&state.rom_path).map_err(|err| Error::new("reading ROM", &err))?);
     state.load()?;
 
     let sdl_context =
@@ -373,10 +372,12 @@ fn run() -> Result<()> {
     let audio_subsystem = sdl_context
         .audio()
         .map_err(|err| Error::from_description("initializing `sdl2` audio subsystem", err))?;
-    let game_controller_subsystem = sdl_context.game_controller()
-        .map_err(|err| Error::from_description("initializing `sdl2` game controller subsystem", err))?;
+    let game_controller_subsystem = sdl_context.game_controller().map_err(|err| {
+        Error::from_description("initializing `sdl2` game controller subsystem", err)
+    })?;
 
-    let available = game_controller_subsystem.num_joysticks()
+    let available = game_controller_subsystem
+        .num_joysticks()
         .map_err(|err| Error::from_description("enumerating joysticks", err))?;
     let mut _controller = None;
     for id in 0..available {
