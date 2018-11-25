@@ -13,6 +13,7 @@ pub struct DebugData<'a> {
     pub colors: &'a [u32],
     pub palettes: &'a [u8],
     pub chr_banks: Vec<&'a [u8]>,
+
     pub nametable_banks: Vec<&'a [u8]>,
     pub oam: &'a [u8],
     pub tall_sprites_enabled: bool,

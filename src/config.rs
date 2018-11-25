@@ -1,3 +1,4 @@
+use sdl2::controller::Button;
 use sdl2::keyboard::Keycode;
 use serde::de::{Deserialize, Deserializer, Error, SeqAccess, Unexpected, Visitor};
 use std::collections::HashMap;
@@ -10,11 +11,26 @@ use toml::{value, Value};
 
 const CONTROLLER_FIELDS: [&str; 8] = ["a", "b", "select", "start", "up", "down", "left", "right"];
 
-struct KeycodeValues(Vec<Keycode>);
-struct KeycodeValuesVisitor(PhantomData<KeycodeValues>);
+#[derive(Debug, Eq, Hash, PartialEq)]
+pub enum KeybindingValue {
+    ButtonValue(Button),
+    KeycodeValue(Keycode),
+}
+impl KeybindingValue {
+    pub fn from_string(controller_type: &ControllerType, value: &str) -> Option<KeybindingValue> {
+        if *controller_type == ControllerType::Keyboard {
+            Keycode::from_name(value).map(KeybindingValue::KeycodeValue)
+        } else {
+            Button::from_string(value).map(KeybindingValue::ButtonValue)
+        }
+    }
+}
 
-impl<'de> Visitor<'de> for KeycodeValuesVisitor {
-    type Value = KeycodeValues;
+struct RawKeybindingValues(Vec<String>);
+struct RawKeybindingValuesVisitor(PhantomData<RawKeybindingValues>);
+
+impl<'de> Visitor<'de> for RawKeybindingValuesVisitor {
+    type Value = RawKeybindingValues;
 
     fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         formatter.write_str("keycode string or list of keycode strings")
@@ -24,13 +40,7 @@ impl<'de> Visitor<'de> for KeycodeValuesVisitor {
     where
         E: Error,
     {
-        let keycode = Keycode::from_name(keycode_name).ok_or_else(|| {
-            E::invalid_value(
-                Unexpected::Str(keycode_name),
-                &"a string as a keycode name.",
-            )
-        })?;
-        Ok(KeycodeValues(vec![keycode]))
+        Ok(RawKeybindingValues(vec![keycode_name.to_owned()]))
     }
 
     fn visit_seq<S>(self, mut visitor: S) -> Result<Self::Value, S::Error>
@@ -40,46 +50,114 @@ impl<'de> Visitor<'de> for KeycodeValuesVisitor {
         let mut value = visitor.next_element::<String>()?;
         let mut keycodes = Vec::new();
         while let Some(keycode_name) = value {
-            let keycode = Keycode::from_name(&keycode_name).ok_or_else(|| {
-                S::Error::invalid_value(
-                    Unexpected::Str(&keycode_name),
-                    &"a string as a keycode name.",
-                )
-            })?;
-            keycodes.push(keycode);
+            keycodes.push(keycode_name);
             value = visitor.next_element::<String>()?;
         }
-        Ok(KeycodeValues(keycodes))
+        Ok(RawKeybindingValues(keycodes))
     }
 }
 
-impl<'de> Deserialize<'de> for KeycodeValues {
-    fn deserialize<D>(deserializer: D) -> Result<KeycodeValues, D::Error>
+impl<'de> Deserialize<'de> for RawKeybindingValues {
+    fn deserialize<D>(deserializer: D) -> Result<RawKeybindingValues, D::Error>
     where
         D: Deserializer<'de>,
     {
-        deserializer.deserialize_any(KeycodeValuesVisitor(PhantomData))
+        deserializer.deserialize_any(RawKeybindingValuesVisitor(PhantomData))
     }
 }
 
-struct RawKeycodeConfig(HashMap<String, KeycodeValues>);
+#[derive(Deserialize, PartialEq)]
+pub enum ControllerType {
+    Controller,
+    Keyboard,
+}
 
-impl<'de> Deserialize<'de> for RawKeycodeConfig {
-    fn deserialize<D>(deserializer: D) -> Result<RawKeycodeConfig, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Ok(RawKeycodeConfig(Deserialize::deserialize(deserializer)?))
+#[derive(Deserialize)]
+struct RawKeybindingConfig {
+    #[serde(rename = "type")]
+    controller_type: ControllerType,
+    #[serde(flatten)]
+    raw_keybindings: HashMap<String, RawKeybindingValues>,
+}
+
+impl RawKeybindingConfig {
+    fn default_keyboard() -> Self {
+        RawKeybindingConfig {
+            controller_type: ControllerType::Keyboard,
+            raw_keybindings: vec![
+                ("a".to_string(), RawKeybindingValues(vec!["P".to_owned()])),
+                ("b".to_string(), RawKeybindingValues(vec!["O".to_owned()])),
+                (
+                    "select".to_string(),
+                    RawKeybindingValues(vec!["Left Shift".to_owned(), "Right Shift".to_owned()]),
+                ),
+                (
+                    "start".to_string(),
+                    RawKeybindingValues(vec!["Return".to_owned()]),
+                ),
+                ("up".to_string(), RawKeybindingValues(vec!["W".to_owned()])),
+                (
+                    "down".to_string(),
+                    RawKeybindingValues(vec!["S".to_owned()]),
+                ),
+                (
+                    "left".to_string(),
+                    RawKeybindingValues(vec!["A".to_owned()]),
+                ),
+                (
+                    "right".to_string(),
+                    RawKeybindingValues(vec!["D".to_owned()]),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        }
+    }
+
+    fn default_controller() -> Self {
+        RawKeybindingConfig {
+            controller_type: ControllerType::Controller,
+            raw_keybindings: vec![
+                ("a".to_string(), RawKeybindingValues(vec!["a".to_owned()])),
+                ("b".to_string(), RawKeybindingValues(vec!["b".to_owned()])),
+                (
+                    "select".to_string(),
+                    RawKeybindingValues(vec!["back".to_owned()]),
+                ),
+                (
+                    "start".to_string(),
+                    RawKeybindingValues(vec!["start".to_owned()]),
+                ),
+                (
+                    "up".to_string(),
+                    RawKeybindingValues(vec!["dpup".to_owned()]),
+                ),
+                (
+                    "down".to_string(),
+                    RawKeybindingValues(vec!["dpdown".to_owned()]),
+                ),
+                (
+                    "left".to_string(),
+                    RawKeybindingValues(vec!["dpleft".to_owned()]),
+                ),
+                (
+                    "right".to_string(),
+                    RawKeybindingValues(vec!["dpright".to_owned()]),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        }
     }
 }
 
 pub struct ControllerConfig {
-    pub keycode_map: HashMap<Keycode, usize>,
+    pub keybinding_map: HashMap<KeybindingValue, usize>,
 }
 
 impl ControllerConfig {
-    fn new(keycode_map: HashMap<Keycode, usize>) -> Self {
-        ControllerConfig { keycode_map }
+    fn new(keybinding_map: HashMap<KeybindingValue, usize>) -> Self {
+        ControllerConfig { keybinding_map }
     }
 }
 
@@ -90,35 +168,38 @@ impl<'de> Deserialize<'de> for ControllerConfig {
     {
         let mut controller_config = ControllerConfig::new(HashMap::new());
 
-        let mut raw_keycode_config = RawKeycodeConfig(
-            vec![
-                ("a".to_string(), KeycodeValues(vec![Keycode::P])),
-                ("b".to_string(), KeycodeValues(vec![Keycode::O])),
-                (
-                    "select".to_string(),
-                    KeycodeValues(vec![Keycode::LShift, Keycode::RShift]),
-                ),
-                ("start".to_string(), KeycodeValues(vec![Keycode::Return])),
-                ("up".to_string(), KeycodeValues(vec![Keycode::W])),
-                ("down".to_string(), KeycodeValues(vec![Keycode::S])),
-                ("left".to_string(), KeycodeValues(vec![Keycode::A])),
-                ("right".to_string(), KeycodeValues(vec![Keycode::D])),
-            ]
-            .into_iter()
-            .collect(),
-        );
-        raw_keycode_config
-            .0
-            .extend(RawKeycodeConfig::deserialize(deserializer)?.0.into_iter());
+        let parsed_raw_config = RawKeybindingConfig::deserialize(deserializer)?;
+        let mut raw_config = if parsed_raw_config.controller_type == ControllerType::Keyboard {
+            RawKeybindingConfig::default_keyboard()
+        } else {
+            RawKeybindingConfig::default_controller()
+        };
+        raw_config
+            .raw_keybindings
+            .extend(parsed_raw_config.raw_keybindings.into_iter());
+        let controller_type = raw_config.controller_type;
 
-        for entry in raw_keycode_config.0 {
+        for entry in raw_config.raw_keybindings {
             match CONTROLLER_FIELDS
                 .iter()
                 .position(|field| **field == entry.0)
             {
                 Some(index) => {
-                    for keycode in (entry.1).0 {
-                        controller_config.keycode_map.insert(keycode, index);
+                    for raw_keybinding_str in (entry.1).0 {
+                        let keybinding =
+                            KeybindingValue::from_string(&controller_type, &raw_keybinding_str)
+                                .ok_or_else(|| {
+                                    let err_msg = if controller_type == ControllerType::Keyboard {
+                                        &"a string as a keycode string."
+                                    } else {
+                                        &"a string as a button name."
+                                    };
+                                    Error::invalid_value(
+                                        Unexpected::Str(&raw_keybinding_str),
+                                        err_msg,
+                                    )
+                                })?;
+                        controller_config.keybinding_map.insert(keybinding, index);
                     }
                 },
                 None => {
@@ -136,33 +217,33 @@ impl<'de> Deserialize<'de> for ControllerConfig {
 
 impl Default for ControllerConfig {
     fn default() -> Self {
-        let keycode_map = vec![
-            (Keycode::P, 0),
-            (Keycode::O, 1),
-            (Keycode::RShift, 2),
-            (Keycode::LShift, 2),
-            (Keycode::Return, 3),
-            (Keycode::W, 4),
-            (Keycode::S, 5),
-            (Keycode::A, 6),
-            (Keycode::D, 7),
-        ]
-        .into_iter()
-        .collect();
-
-        ControllerConfig { keycode_map }
+        ControllerConfig {
+            keybinding_map: vec![
+                (KeybindingValue::KeycodeValue(Keycode::P), 0),
+                (KeybindingValue::KeycodeValue(Keycode::O), 1),
+                (KeybindingValue::KeycodeValue(Keycode::RShift), 2),
+                (KeybindingValue::KeycodeValue(Keycode::LShift), 2),
+                (KeybindingValue::KeycodeValue(Keycode::Return), 3),
+                (KeybindingValue::KeycodeValue(Keycode::W), 4),
+                (KeybindingValue::KeycodeValue(Keycode::S), 5),
+                (KeybindingValue::KeycodeValue(Keycode::A), 6),
+                (KeybindingValue::KeycodeValue(Keycode::D), 7),
+            ]
+            .into_iter()
+            .collect(),
+        }
     }
 }
 
-// TODO: Use macro to generate this.
 pub struct KeybindingsConfig {
-    pub exit: Vec<Keycode>,
-    pub mute: Vec<Keycode>,
-    pub reset: Vec<Keycode>,
-    pub save_state: Vec<Keycode>,
-    pub load_state: Vec<Keycode>,
-    pub increase_speed: Vec<Keycode>,
-    pub decrease_speed: Vec<Keycode>,
+    pub mute: Vec<KeybindingValue>,
+    pub pause: Vec<KeybindingValue>,
+    pub reset: Vec<KeybindingValue>,
+    pub exit: Vec<KeybindingValue>,
+    pub save_state: Vec<KeybindingValue>,
+    pub load_state: Vec<KeybindingValue>,
+    pub increase_speed: Vec<KeybindingValue>,
+    pub decrease_speed: Vec<KeybindingValue>,
 }
 
 impl<'de> Deserialize<'de> for KeybindingsConfig {
@@ -171,17 +252,33 @@ impl<'de> Deserialize<'de> for KeybindingsConfig {
         D: Deserializer<'de>,
     {
         let mut keybindings_config = KeybindingsConfig::default();
-        let raw_keycode_config = RawKeycodeConfig::deserialize(deserializer)?;
+        let raw_config = RawKeybindingConfig::deserialize(deserializer)?;
+        let controller_type = raw_config.controller_type;
 
-        for entry in raw_keycode_config.0 {
+        for entry in raw_config.raw_keybindings {
+            let mut keybindings = Vec::new();
+            for raw_keybinding_str in (entry.1).0.iter() {
+                let keybinding =
+                    KeybindingValue::from_string(&controller_type, &raw_keybinding_str)
+                        .ok_or_else(|| {
+                            let err_msg = if controller_type == ControllerType::Keyboard {
+                                &"a string as a keycode string."
+                            } else {
+                                &"a string as a button name."
+                            };
+                            Error::invalid_value(Unexpected::Str(&raw_keybinding_str), err_msg)
+                        })?;
+                keybindings.push(keybinding);
+            }
             match entry.0.as_ref() {
-                "exit" => keybindings_config.exit = (entry.1).0,
-                "mute" => keybindings_config.mute = (entry.1).0,
-                "reset" => keybindings_config.reset = (entry.1).0,
-                "save_state" => keybindings_config.save_state = (entry.1).0,
-                "load_state" => keybindings_config.load_state = (entry.1).0,
-                "increase_speed" => keybindings_config.increase_speed = (entry.1).0,
-                "decrease_speed" => keybindings_config.decrease_speed = (entry.1).0,
+                "mute" => keybindings_config.mute = keybindings,
+                "pause" => keybindings_config.mute = keybindings,
+                "reset" => keybindings_config.reset = keybindings,
+                "exit" => keybindings_config.exit = keybindings,
+                "save_state" => keybindings_config.save_state = keybindings,
+                "load_state" => keybindings_config.load_state = keybindings,
+                "increase_speed" => keybindings_config.increase_speed = keybindings,
+                "decrease_speed" => keybindings_config.decrease_speed = keybindings,
                 _ => {
                     return Err(Error::invalid_value(
                         Unexpected::Str(&entry.0),
@@ -198,13 +295,14 @@ impl<'de> Deserialize<'de> for KeybindingsConfig {
 impl Default for KeybindingsConfig {
     fn default() -> Self {
         KeybindingsConfig {
-            reset: vec![Keycode::R],
-            mute: vec![Keycode::M],
-            exit: vec![Keycode::Escape],
-            save_state: vec![Keycode::F1],
-            load_state: vec![Keycode::F2],
-            increase_speed: vec![Keycode::RightBracket],
-            decrease_speed: vec![Keycode::LeftBracket],
+            mute: vec![KeybindingValue::KeycodeValue(Keycode::M)],
+            pause: vec![KeybindingValue::KeycodeValue(Keycode::Space)],
+            reset: vec![KeybindingValue::KeycodeValue(Keycode::R)],
+            exit: vec![KeybindingValue::KeycodeValue(Keycode::Escape)],
+            save_state: vec![KeybindingValue::KeycodeValue(Keycode::F1)],
+            load_state: vec![KeybindingValue::KeycodeValue(Keycode::F2)],
+            increase_speed: vec![KeybindingValue::KeycodeValue(Keycode::RightBracket)],
+            decrease_speed: vec![KeybindingValue::KeycodeValue(Keycode::LeftBracket)],
         }
     }
 }

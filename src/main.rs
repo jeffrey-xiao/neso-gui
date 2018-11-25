@@ -3,6 +3,7 @@ extern crate neso;
 extern crate sdl2;
 #[macro_use]
 extern crate log;
+#[macro_use]
 extern crate serde_derive;
 extern crate simplelog;
 extern crate toml;
@@ -17,7 +18,6 @@ use sdl2::event::Event;
 use sdl2::pixels::{Color, PixelFormatEnum};
 use sdl2::rect::Rect;
 use simplelog::{CombinedLogger, Level, LevelFilter, TermLogger};
-use std::path::Path;
 use std::time::{Duration, Instant};
 use std::{error, fmt, fs, process, ptr, result, slice, thread};
 
@@ -84,82 +84,224 @@ impl fmt::Display for Error {
 
 pub type Result<T> = result::Result<T, Error>;
 
-fn save<P>(config: &config::Config, nes: &Nes, rom_path: P) -> Result<()>
-where
-    P: AsRef<Path>,
-{
-    let data = nes
-        .save()
-        .map_err(|err| Error::new("getting save data", &err))?;
-    let save_file_path = config.get_save_file(rom_path);
-    if let Some(data) = data {
-        info!("[GUI] Writing save file at {:?}.", save_file_path);
-        fs::create_dir_all(&config.data_path)
-            .map_err(|err| Error::new("creating data directory: {}", &err))?;
-        fs::write(save_file_path, &data).map_err(|err| Error::new("writing save data", &err))?;
+struct EmulatorState {
+    nes: Nes,
+    config: config::Config,
+    rom_path: String,
+    is_muted: bool,
+    is_paused: bool,
+    is_running: bool,
+    debug_enabled: bool,
+    speed_index: usize,
+}
+
+impl EmulatorState {
+    fn toggle_muted(&mut self) {
+        self.is_muted = !self.is_muted;
+        info!("[GUI] Is muted: {}.", self.is_muted);
     }
-    Ok(())
-}
 
-fn load<P>(config: &config::Config, nes: &mut Nes, rom_path: P) -> Result<()>
-where
-    P: AsRef<Path>,
-{
-    let save_file_path = config.get_save_file(rom_path);
-    if save_file_path.exists() {
-        info!("[GUI] Reading save file at {:?}.", save_file_path);
-        let data = fs::read(save_file_path).map_err(|err| Error::new("reading save data", &err))?;
-        nes.load(&data)
-            .map_err(|err| Error::new("loading save data", &err))?;
+    fn toggle_paused(&mut self) {
+        self.is_paused = !self.is_paused;
+        info!("[GUI] Is paused: {}.", self.is_paused);
     }
-    Ok(())
-}
 
-fn save_state<P>(config: &config::Config, nes: &Nes, rom_path: P) -> Result<()>
-where
-    P: AsRef<Path>,
-{
-    let data = nes
-        .save_state()
-        .map_err(|err| Error::new("getting save state data", &err))?;
-    let save_state_file_path = config.get_save_state_file(rom_path);
-    info!(
-        "[GUI] Writing save state file at {:?}.",
-        save_state_file_path
-    );
-    fs::create_dir_all(&config.data_path)
-        .map_err(|err| Error::new("creating data directory: {}", &err))?;
-    fs::write(save_state_file_path, &data)
-        .map_err(|err| Error::new("writing save state data", &err))?;
-    Ok(())
-}
+    fn stop(&mut self) -> Result<()> {
+        self.save()?;
+        self.is_running = false;
+        Ok(())
+    }
 
-fn load_state<P>(config: &config::Config, nes: &mut Nes, rom_path: P) -> Result<()>
-where
-    P: AsRef<Path>,
-{
-    let save_state_file_path = config.get_save_state_file(rom_path);
-    if save_state_file_path.exists() {
+    fn increase_speed(&mut self) {
+        if self.speed_index < SPEEDS.len() - 1 {
+            self.speed_index += 1;
+        }
+        info!("[GUI] Speed set to: {:.2}.", SPEEDS[self.speed_index]);
+        self.reset_sample_freq();
+    }
+
+    fn decrease_speed(&mut self) {
+        if self.speed_index > 0 {
+            self.speed_index -= 1;
+        }
+        info!("[GUI] Speed set to: {:.2}.", SPEEDS[self.speed_index]);
+        self.reset_sample_freq();
+    }
+
+    fn handle_button_press(&mut self, keybinding_value: config::KeybindingValue) -> Result<()> {
+        for (port, controller_config) in self.config.controller_configs.iter().enumerate() {
+            if let Some(index) = controller_config.keybinding_map.get(&keybinding_value) {
+                self.nes.press_button(port, *index as u8);
+            }
+        }
+
+        if self
+            .config
+            .keybindings_config
+            .mute
+            .contains(&keybinding_value)
+        {
+            self.toggle_muted();
+        }
+
+        if self
+            .config
+            .keybindings_config
+            .pause
+            .contains(&keybinding_value)
+        {
+            self.toggle_paused();
+        }
+
+        if self
+            .config
+            .keybindings_config
+            .reset
+            .contains(&keybinding_value)
+        {
+            self.nes.reset();
+        }
+
+        if self
+            .config
+            .keybindings_config
+            .exit
+            .contains(&keybinding_value)
+        {
+            self.stop()?;
+        }
+
+        if self
+            .config
+            .keybindings_config
+            .save_state
+            .contains(&keybinding_value)
+        {
+            self.save_state()?;
+        }
+
+        if self
+            .config
+            .keybindings_config
+            .load_state
+            .contains(&keybinding_value)
+        {
+            self.load_state()?;
+        }
+
+        if self
+            .config
+            .keybindings_config
+            .increase_speed
+            .contains(&keybinding_value)
+        {
+            self.increase_speed();
+        }
+
+        if self
+            .config
+            .keybindings_config
+            .decrease_speed
+            .contains(&keybinding_value)
+        {
+            self.decrease_speed();
+        }
+
+        Ok(())
+    }
+
+    fn handle_button_release(&mut self, keybinding_value: config::KeybindingValue) {
+        for (port, controller_config) in
+            self.config.controller_configs.iter().enumerate()
+        {
+            if let Some(index) = controller_config.keybinding_map.get(&keybinding_value)
+            {
+                self.nes.release_button(port, *index as u8);
+            }
+        }
+    }
+
+    fn save(&self) -> Result<()> {
+        let data = self
+            .nes
+            .save()
+            .map_err(|err| Error::new("getting save data", &err))?;
+        let save_file_path = self.config.get_save_file(&self.rom_path);
+        if let Some(data) = data {
+            info!("[GUI] Writing save file at {:?}.", save_file_path);
+            fs::create_dir_all(&self.config.data_path)
+                .map_err(|err| Error::new("creating data directory: {}", &err))?;
+            fs::write(save_file_path, &data)
+                .map_err(|err| Error::new("writing save data", &err))?;
+        }
+        Ok(())
+    }
+
+    fn load(&mut self) -> Result<()> {
+        let save_file_path = self.config.get_save_file(&self.rom_path);
+        if save_file_path.exists() {
+            info!("[GUI] Reading save file at {:?}.", save_file_path);
+            let data =
+                fs::read(save_file_path).map_err(|err| Error::new("reading save data", &err))?;
+            self.nes
+                .load(&data)
+                .map_err(|err| Error::new("loading save data", &err))?;
+        }
+        Ok(())
+    }
+
+    fn save_state(&self) -> Result<()> {
+        let data = self
+            .nes
+            .save_state()
+            .map_err(|err| Error::new("getting save state data", &err))?;
+        let save_state_file_path = self.config.get_save_state_file(&self.rom_path);
         info!(
-            "[GUI] Reading save state file at {:?}.",
+            "[GUI] Writing save state file at {:?}.",
             save_state_file_path
         );
-        let data = fs::read(save_state_file_path)
-            .map_err(|err| Error::new("reading save state data", &err))?;
-        nes.load_state(&data)
-            .map_err(|err| Error::new("loading save state data", &err))?;
-    } else {
-        warn!("No save state exists for this ROM.");
+        fs::create_dir_all(&self.config.data_path)
+            .map_err(|err| Error::new("creating data directory: {}", &err))?;
+        fs::write(save_state_file_path, &data)
+            .map_err(|err| Error::new("writing save state data", &err))?;
+        Ok(())
     }
-    Ok(())
-}
 
-fn compute_mus_per_frame(speed_index: usize) -> Duration {
-    Duration::from_micros((1.0 / SPEEDS[speed_index] / 60.0 * 1e6).round() as u64)
-}
+    fn load_state(&mut self) -> Result<()> {
+        let save_state_file_path = self.config.get_save_state_file(&self.rom_path);
+        if save_state_file_path.exists() {
+            info!(
+                "[GUI] Reading save state file at {:?}.",
+                save_state_file_path
+            );
+            let data = fs::read(save_state_file_path)
+                .map_err(|err| Error::new("reading save state data", &err))?;
+            self.nes
+                .load_state(&data)
+                .map_err(|err| Error::new("loading save state data", &err))?;
+        } else {
+            warn!("No save state exists for this ROM.");
+        }
+        self.reset_sample_freq();
+        Ok(())
+    }
 
-fn compute_sample_freq(speed_index: usize) -> f32 {
-    44_100.0 / SPEEDS[speed_index]
+    fn mus_per_frame(&self) -> Duration {
+        Duration::from_micros((1.0 / SPEEDS[self.speed_index] / 60.0 * 1e6).round() as u64)
+    }
+
+    fn reset_sample_freq(&mut self) {
+        self.nes
+            .set_sample_freq(44_100.0 / SPEEDS[self.speed_index]);
+    }
+
+    fn window_dimensions(&self) -> (u32, u32) {
+        if self.debug_enabled {
+            (1024, 736)
+        } else {
+            (512, 480)
+        }
+    }
 }
 
 fn run() -> Result<()> {
@@ -207,19 +349,21 @@ fn run() -> Result<()> {
         )
         .get_matches();
 
-    let debug_enabled = matches.is_present("debug");
-    let rom_path = matches
+    let mut state = EmulatorState {
+        nes: Nes::default(),
+        config: config::Config::parse_config(config::get_config_path(matches.value_of("config")))?,
+        rom_path: matches
         .value_of("rom-path")
-        .expect("Expected `rom-path` to exist.");
-    let config_path = config::get_config_path(matches.value_of("config"));
-    let config = config::Config::parse_config(config_path)?;
-    let mut is_muted = false;
-    let mut speed_index = 4;
-    let mut mus_per_frame = compute_mus_per_frame(speed_index);
-
-    let mut nes = Nes::default();
-    nes.load_rom(&fs::read(rom_path).map_err(|err| Error::new("reading ROM", &err))?);
-    load(&config, &mut nes, &rom_path)?;
+        .expect("Expected `rom-path` to exist.")
+        .to_owned(),
+        is_muted: false,
+        is_paused: matches.value_of("frames").is_some(),
+        is_running: true,
+        debug_enabled: matches.is_present("debug"),
+        speed_index: 4,
+    };
+    state.nes.load_rom(&fs::read(&state.rom_path).map_err(|err| Error::new("reading ROM", &err))?);
+    state.load()?;
 
     let sdl_context =
         sdl2::init().map_err(|err| Error::from_description("initializing `sdl2`", err))?;
@@ -229,15 +373,28 @@ fn run() -> Result<()> {
     let audio_subsystem = sdl_context
         .audio()
         .map_err(|err| Error::from_description("initializing `sdl2` audio subsystem", err))?;
+    let game_controller_subsystem = sdl_context.game_controller()
+        .map_err(|err| Error::from_description("initializing `sdl2` game controller subsystem", err))?;
 
-    let window_dimensions = if debug_enabled {
-        (1024, 736)
-    } else {
-        (512, 480)
-    };
+    let available = game_controller_subsystem.num_joysticks()
+        .map_err(|err| Error::from_description("enumerating joysticks", err))?;
+    let mut _controller = None;
+    for id in 0..available {
+        if game_controller_subsystem.is_game_controller(id) {
+            match game_controller_subsystem.open(id) {
+                Ok(c) => {
+                    info!("[GUI] Opened controller: {}", c.name());
+                    _controller = Some(c);
+                    break;
+                },
+                Err(err) => error!("[GUI] Failed to open controller: {}", err),
+            }
+        }
+    }
 
+    let (width, height) = state.window_dimensions();
     let window = video_subsystem
-        .window("neso-gui", window_dimensions.0, window_dimensions.1)
+        .window("neso-gui", width, height)
         .position_centered()
         .opengl()
         .build()
@@ -251,13 +408,15 @@ fn run() -> Result<()> {
     canvas.present();
     canvas.set_draw_color(Color::RGB(255, 255, 255));
 
-    let desired_spec = AudioSpecDesired {
-        freq: Some(44_100),
-        channels: Some(1),
-        samples: Some(1024),
-    };
     let audio_queue = audio_subsystem
-        .open_queue::<f32, _>(None, &desired_spec)
+        .open_queue::<f32, _>(
+            None,
+            &AudioSpecDesired {
+                freq: Some(44_100),
+                channels: Some(1),
+                samples: Some(1024),
+            },
+        )
         .map_err(|err| Error::from_description("opening audio queue", err))?;
     audio_queue.resume();
 
@@ -270,90 +429,51 @@ fn run() -> Result<()> {
             .parse()
             .map_err(|err| Error::new("parsing frames", &err))?
         {
-            nes.step_frame();
+            state.nes.step_frame();
         }
     }
 
-    'running: loop {
+    while state.is_running {
         let start = Instant::now();
+
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit { .. } => {
-                    save(&config, &nes, rom_path)?;
-                    break 'running;
+                    state.stop()?;
                 },
                 Event::KeyDown {
                     keycode: Some(keycode),
                     ..
                 } => {
-                    for (port, controller_config) in config.controller_configs.iter().enumerate() {
-                        if let Some(index) = controller_config.keycode_map.get(&keycode) {
-                            nes.press_button(port, *index as u8);
-                        }
-                    }
-
-                    if config.keybindings_config.reset.contains(&keycode) {
-                        nes.reset();
-                    }
-
-                    if config.keybindings_config.exit.contains(&keycode) {
-                        save(&config, &nes, rom_path)?;
-                        break 'running;
-                    }
-
-                    if config.keybindings_config.mute.contains(&keycode) {
-                        is_muted = !is_muted;
-                        info!("[GUI] Is muted: {}.", is_muted);
-                    }
-
-                    if config.keybindings_config.save_state.contains(&keycode) {
-                        save_state(&config, &nes, rom_path)?;
-                    }
-
-                    if config.keybindings_config.load_state.contains(&keycode) {
-                        load_state(&config, &mut nes, rom_path)?;
-                        nes.set_sample_freq(compute_sample_freq(speed_index))
-                    }
-
-                    if config.keybindings_config.increase_speed.contains(&keycode)
-                        && speed_index < SPEEDS.len() - 1
-                    {
-                        speed_index += 1;
-                        info!("[GUI] Speed set to: {:.2}.", SPEEDS[speed_index]);
-                        mus_per_frame = compute_mus_per_frame(speed_index);
-                        nes.set_sample_freq(compute_sample_freq(speed_index))
-                    }
-
-                    if config.keybindings_config.decrease_speed.contains(&keycode)
-                        && speed_index > 0
-                    {
-                        speed_index -= 1;
-                        info!("[GUI] Speed set to: {:.2}.", SPEEDS[speed_index]);
-                        mus_per_frame = compute_mus_per_frame(speed_index);
-                        nes.set_sample_freq(compute_sample_freq(speed_index))
-                    }
+                    let keybinding_value = config::KeybindingValue::KeycodeValue(keycode);
+                    state.handle_button_press(keybinding_value)?;
                 },
                 Event::KeyUp {
                     keycode: Some(keycode),
                     ..
                 } => {
-                    for (port, controller_config) in config.controller_configs.iter().enumerate() {
-                        if let Some(index) = controller_config.keycode_map.get(&keycode) {
-                            nes.release_button(port, *index as u8);
-                        }
-                    }
+                    let keybinding_value = config::KeybindingValue::KeycodeValue(keycode);
+                    state.handle_button_release(keybinding_value);
+                },
+                Event::ControllerButtonDown { button, .. } => {
+                    let keybinding_value = config::KeybindingValue::ButtonValue(button);
+                    state.handle_button_press(keybinding_value)?;
+                },
+                Event::ControllerButtonUp { button, .. } => {
+                    let keybinding_value = config::KeybindingValue::ButtonValue(button);
+                    state.handle_button_release(keybinding_value);
                 },
                 _ => {},
             }
         }
 
-        if matches.value_of("frames").is_none() {
-            nes.step_frame();
+        if !state.is_paused {
+            state.nes.step_frame();
         }
 
-        if !is_muted {
-            let buffer_len = nes.audio_buffer_len();
-            let slice = unsafe { slice::from_raw_parts(nes.audio_buffer(), buffer_len) };
+        if !state.is_muted && state.is_running {
+            let buffer_len = state.nes.audio_buffer_len();
+            let slice = unsafe { slice::from_raw_parts(state.nes.audio_buffer(), buffer_len) };
             audio_queue.queue(&slice[0..buffer_len]);
         }
 
@@ -364,7 +484,7 @@ fn run() -> Result<()> {
             .with_lock(None, |buffer: &mut [u8], _pitch: usize| {
                 unsafe {
                     ptr::copy_nonoverlapping(
-                        nes.image_buffer(),
+                        state.nes.image_buffer(),
                         buffer.as_mut_ptr(),
                         240 * 256 * 4,
                     );
@@ -375,8 +495,8 @@ fn run() -> Result<()> {
             .copy(&texture, None, Some(Rect::new(0, 0, 256 * 2, 240 * 2)))
             .map_err(|err| Error::from_description("copying output texture to canvas", err))?;
 
-        if debug_enabled {
-            let debug_data = graphics::DebugData::new(&nes);
+        if state.debug_enabled {
+            let debug_data = graphics::DebugData::new(&state.nes);
 
             let colors_rect = Rect::new(512, 480 + 16 * 4, 32 * 16, 32 * 4);
             canvas
@@ -436,6 +556,9 @@ fn run() -> Result<()> {
                         Error::from_description("copying nametable texture to canvas", err)
                     })?;
             }
+            canvas
+                .draw_rect(Rect::new(512, 0, 512, 480))
+                .map_err(|err| Error::from_description("drawing nametables border", err))?;
 
             for table_index in 0..2 {
                 canvas
@@ -457,6 +580,7 @@ fn run() -> Result<()> {
         canvas.present();
 
         let elapsed = start.elapsed();
+        let mus_per_frame = state.mus_per_frame();
         if mus_per_frame > elapsed {
             thread::sleep(mus_per_frame - elapsed);
         }
