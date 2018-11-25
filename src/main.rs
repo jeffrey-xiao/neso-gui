@@ -378,7 +378,7 @@ fn run() -> Result<()> {
         if debug_enabled {
             let debug_data = graphics::DebugData::new(&nes);
 
-            let colors_rect = Rect::new(512, 480, 32 * 16, 32 * 4);
+            let colors_rect = Rect::new(512, 480 + 16 * 4, 32 * 16, 32 * 4);
             canvas
                 .copy(
                     &graphics::get_colors_texture(&texture_creator, &debug_data)?,
@@ -390,7 +390,7 @@ fn run() -> Result<()> {
                 .draw_rect(colors_rect)
                 .map_err(|err| Error::from_description("drawing colors border", err))?;
 
-            let palettes_rect = Rect::new(512, 480 + 32 * 4, 32 * 16, 32 * 2);
+            let palettes_rect = Rect::new(512, 480 + 32 * 4 + 16 * 4, 32 * 16, 32 * 2);
             canvas
                 .copy(
                     &graphics::get_palettes_texture(&texture_creator, &debug_data)?,
@@ -402,6 +402,18 @@ fn run() -> Result<()> {
                 })?;
             canvas
                 .draw_rect(palettes_rect)
+                .map_err(|err| Error::from_description("drawing palettes border", err))?;
+
+            let oam_rect = Rect::new(512, 480, 16 * 32, 16 * 4);
+            canvas
+                .copy(
+                    &graphics::get_oam_texture(&texture_creator, &debug_data)?,
+                    None,
+                    Some(oam_rect),
+                )
+                .map_err(|err| Error::from_description("copying oam texture to canvas", err))?;
+            canvas
+                .draw_rect(oam_rect)
                 .map_err(|err| Error::from_description("drawing palettes border", err))?;
 
             for bank_index in 0..4 {
@@ -440,21 +452,6 @@ fn run() -> Result<()> {
                         Error::from_description("copying pattern table texture to canvas", err)
                     })?;
             }
-
-            let oam_rect = Rect::new(512, 480 + 32 * 6, 16 * 32, 16 * 4);
-            canvas
-                .copy(
-                    &graphics::get_oam_texture(
-                        &texture_creator,
-                        &debug_data,
-                    )?,
-                    None,
-                    Some(oam_rect),
-                )
-                .map_err(|err| Error::from_description("copying oam texture to canvas", err))?;
-            canvas
-                .draw_rect(oam_rect)
-                .map_err(|err| Error::from_description("drawing palettes border", err))?;
         }
 
         canvas.present();
