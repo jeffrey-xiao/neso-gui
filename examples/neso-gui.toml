@@ -1,0 +1,35 @@
+[general]
+data_path = "/home/jeffreyxiao/.local/share/neso-gui"
+
+[port-1]
+type = "Keyboard"
+a = "P"
+b = "O"
+select = ["Left Shift", "Right Shift"]
+start = "Return"
+up = "W"
+down = "S"
+left = "A"
+right = "D"
+
+[port-2]
+type = "Keyboard"
+a = "P"
+b = "O"
+select = ["Left Shift", "Right Shift"]
+start = "Return"
+up = "W"
+down = "S"
+left = "A"
+right = "D"
+
+[keybindings]
+type = "Keyboard"
+mute = "M"
+pause = "Space"
+reset = "R"
+exit = "Escape"
+save_state = "F1"
+load_state = "F2"
+increase_speed = "]"
+decrease_speed = "["

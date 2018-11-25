@@ -472,7 +472,7 @@ fn run() -> Result<()> {
             state.nes.step_frame();
         }
 
-        if !state.is_muted && state.is_running {
+        if !state.is_paused && !state.is_muted {
             let buffer_len = state.nes.audio_buffer_len();
             let slice = unsafe { slice::from_raw_parts(state.nes.audio_buffer(), buffer_len) };
             audio_queue.queue(&slice[0..buffer_len]);

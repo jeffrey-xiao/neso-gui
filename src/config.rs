@@ -272,7 +272,7 @@ impl<'de> Deserialize<'de> for KeybindingsConfig {
             }
             match entry.0.as_ref() {
                 "mute" => keybindings_config.mute = keybindings,
-                "pause" => keybindings_config.mute = keybindings,
+                "pause" => keybindings_config.pause = keybindings,
                 "reset" => keybindings_config.reset = keybindings,
                 "exit" => keybindings_config.exit = keybindings,
                 "save_state" => keybindings_config.save_state = keybindings,
