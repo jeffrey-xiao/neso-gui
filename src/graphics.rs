@@ -1,27 +1,110 @@
-use super::{Error, Result};
+use neso::Nes;
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::render::{Texture, TextureCreator};
 use sdl2::video::WindowContext;
+use super::{Error, Result};
+use std::slice;
+
+pub struct DebugData<'a> {
+    pub colors: &'a[u32],
+    pub palettes: &'a[u8],
+    pub chr_banks: Vec<&'a[u8]>,
+    pub nametable_banks: Vec<&'a[u8]>,
+    pub oam: &'a[u8],
+    pub tall_sprites_enabled: bool,
+    pub background_chr_bank: usize,
+}
+
+impl<'a> DebugData<'a> {
+    pub fn new(nes: &Nes) -> DebugData<'a> {
+        let mut chr_banks = Vec::with_capacity(8);
+        for bank_index in 0..8 {
+            chr_banks.push(unsafe { slice::from_raw_parts(nes.chr_bank(bank_index), 0x400) });
+        }
+
+        let mut nametable_banks = Vec::with_capacity(4);
+        for bank_index in 0..4 {
+            nametable_banks.push(unsafe { slice::from_raw_parts(nes.nametable_bank(bank_index), 0x800) });
+        }
+
+        DebugData {
+            colors: unsafe { slice::from_raw_parts(nes.colors(), 64) },
+            palettes: unsafe { slice::from_raw_parts(nes.palettes(), 32) },
+            chr_banks,
+            nametable_banks,
+            oam: unsafe { slice::from_raw_parts(nes.object_attribute_memory(), 0x100) },
+            tall_sprites_enabled: nes.tall_sprites_enabled(),
+            background_chr_bank: nes.background_chr_bank(),
+        }
+    }
+}
+
+pub fn get_colors_texture<'a>(
+    texture_creator: &'a TextureCreator<WindowContext>,
+    d: &DebugData,
+) -> Result<Texture<'a>> {
+    let cols = 16;
+    let rows = 4;
+    let mut texture = texture_creator
+        .create_texture_streaming(PixelFormatEnum::RGB24, cols as u32, rows as u32)
+        .map_err(|err| Error::new("creating colors texture", &err))?;
+    texture
+        .with_lock(None, |buffer: &mut [u8], _pitch: usize| {
+            for i in 0..rows * cols {
+                buffer[i * 3] = ((d.colors[i] >> 16) & 0xFF) as u8;
+                buffer[i * 3 + 1] = ((d.colors[i] >> 8) & 0xFF) as u8;
+                buffer[i * 3 + 2] = (d.colors[i] & 0xFF) as u8;
+            }
+        })
+        .map_err(|err| Error::from_description("locking colors texture", err))?;
+    Ok(texture)
+}
+
+pub fn get_palettes_texture<'a>(
+    texture_creator: &'a TextureCreator<WindowContext>,
+    d: &DebugData,
+) -> Result<Texture<'a>> {
+    let cols = 16;
+    let rows = 2;
+    let mut texture = texture_creator
+        .create_texture_streaming(PixelFormatEnum::RGB24, cols as u32, rows as u32)
+        .map_err(|err| Error::new("creating palettes texture", &err))?;
+    texture
+        .with_lock(None, |buffer: &mut [u8], _pitch: usize| {
+            for i in 0..rows * cols {
+                // Handle background color mirroring
+                let color_index = d.palettes[if i % 4 == 0 { 0 } else { i % 32 }] as usize;
+                buffer[i * 3] = ((d.colors[color_index] >> 16) & 0xFF) as u8;
+                buffer[i * 3 + 1] = ((d.colors[color_index] >> 8) & 0xFF) as u8;
+                buffer[i * 3 + 2] = (d.colors[color_index] & 0xFF) as u8;
+            }
+        })
+        .map_err(|err| Error::from_description("locking palettes texture", err))?;
+    Ok(texture)
+}
 
 pub fn get_pattern_table_texture<'a>(
     texture_creator: &'a TextureCreator<WindowContext>,
-    chr_banks: &[&[u8]],
-    offset: usize,
+    d: &DebugData,
+    table_index: usize,
 ) -> Result<Texture<'a>> {
+    let cols = 128;
+    let rows = 128;
+    let offset = table_index * 0x1000;
     let mut texture = texture_creator
-        .create_texture_streaming(PixelFormatEnum::RGB24, 128, 128)
+        .create_texture_streaming(PixelFormatEnum::RGB24, cols as u32, rows as u32)
         .map_err(|err| Error::new("creating pattern table texture", &err))?;
     texture
         .with_lock(None, |buffer: &mut [u8], _pitch: usize| {
-            for row in 0..16 {
+            for row in 0..rows / 8 {
                 for i in 0..8 {
-                    for col in 0..16 {
+                    for col in 0..cols / 8 {
                         let byte_index = (row * 16 * 8 + col * 8) * 2 + i + offset;
                         for j in 0..8 {
                             let bank_index = byte_index / 0x400;
                             let bank_offset = byte_index % 0x400;
-                            let mut val = (chr_banks[bank_index][bank_offset] >> (7 - j)) & 0x01
-                                | ((chr_banks[bank_index][bank_offset + 8] >> (7 - j)) & 0x01) << 1;
+                            let mut val = (d.chr_banks[bank_index][bank_offset] >> (7 - j)) & 0x01
+                                | ((d.chr_banks[bank_index][bank_offset + 8] >> (7 - j)) & 0x01) << 1;
                             val = 255 - 85 * val;
                             let buffer_index = (row * 16 * 8 * 8 + i * 16 * 8 + col * 8 + j) * 3;
                             buffer[buffer_index] = val;
@@ -38,20 +121,20 @@ pub fn get_pattern_table_texture<'a>(
 
 pub fn get_nametable_texture<'a>(
     texture_creator: &'a TextureCreator<WindowContext>,
-    colors: &[u32],
-    palettes: &[u8],
-    chr_banks: &[&[u8]],
-    nametable_bank: &[u8],
+    d: &DebugData,
+    bank_index: usize,
 ) -> Result<Texture<'a>> {
-    let (nametable, attribute_table) = nametable_bank.split_at(960);
+    let cols = 256;
+    let rows = 240;
+    let (nametable, attribute_table) = d.nametable_banks[bank_index].split_at(960);
     let mut texture = texture_creator
-        .create_texture_streaming(PixelFormatEnum::RGB24, 256, 240)
-        .map_err(|err| Error::new("creating pattern table texture", &err))?;
+        .create_texture_streaming(PixelFormatEnum::RGB24, cols as u32, rows as u32)
+        .map_err(|err| Error::new("creating nametable texture", &err))?;
     texture
         .with_lock(None, |buffer: &mut [u8], _pitch: usize| {
-            for row in 0..30 {
+            for row in 0..rows / 8 {
                 for i in 0..8 {
-                    for col in 0..32 {
+                    for col in 0..cols / 8 {
                         let byte_index = (nametable[row * 32 + col] as usize) * 16 + i;
                         let attribute_table_index = (row / 4) * 8 + col / 4;
                         let attribute_table_shift = if (row / 2) % 2 == 0 { 0 } else { 4 }
@@ -60,19 +143,19 @@ pub fn get_nametable_texture<'a>(
                             >> attribute_table_shift)
                             & 0x03;
                         for j in 0..8 {
-                            let bank_index = byte_index / 0x400;
+                            let bank_index = byte_index / 0x400 + d.background_chr_bank;
                             let bank_offset = byte_index % 0x400;
-                            let val = (chr_banks[bank_index][bank_offset] >> (7 - j)) & 0x01
-                                | (chr_banks[bank_index][bank_offset + 8] >> (7 - j) & 0x01) << 1;
+                            let val = (d.chr_banks[bank_index][bank_offset] >> (7 - j)) & 0x01
+                                | (d.chr_banks[bank_index][bank_offset + 8] >> (7 - j) & 0x01) << 1;
                             let color_index = if val == 0 {
-                                palettes[0] as usize
+                                d.palettes[0] as usize
                             } else {
-                                palettes[(palette_index * 4 + val) as usize] as usize
+                                d.palettes[(palette_index * 4 + val) as usize] as usize
                             };
                             let buffer_index = (row * 8 * 32 * 8 + i * 32 * 8 + col * 8 + j) * 3;
-                            buffer[buffer_index] = ((colors[color_index] >> 16) & 0xFF) as u8;
-                            buffer[buffer_index + 1] = ((colors[color_index] >> 8) & 0xFF) as u8;
-                            buffer[buffer_index + 2] = (colors[color_index] & 0xFF) as u8;
+                            buffer[buffer_index] = ((d.colors[color_index] >> 16) & 0xFF) as u8;
+                            buffer[buffer_index + 1] = ((d.colors[color_index] >> 8) & 0xFF) as u8;
+                            buffer[buffer_index + 2] = (d.colors[color_index] & 0xFF) as u8;
                         }
                     }
                 }
@@ -82,43 +165,58 @@ pub fn get_nametable_texture<'a>(
     Ok(texture)
 }
 
-pub fn get_colors_texture<'a>(
+pub fn get_oam_texture<'a>(
     texture_creator: &'a TextureCreator<WindowContext>,
-    colors: &[u32],
+    d: &DebugData,
 ) -> Result<Texture<'a>> {
+    let cols = 256;
+    let rows = 32;
     let mut texture = texture_creator
-        .create_texture_streaming(PixelFormatEnum::RGB24, 16, 4)
-        .map_err(|err| Error::new("creating colors texture", &err))?;
+        .create_texture_streaming(PixelFormatEnum::RGB24, cols as u32, rows as u32)
+        .map_err(|err| Error::new("creating oam texture", &err))?;
     texture
         .with_lock(None, |buffer: &mut [u8], _pitch: usize| {
-            for i in 0..64 {
-                buffer[i * 3] = ((colors[i] >> 16) & 0xFF) as u8;
-                buffer[i * 3 + 1] = ((colors[i] >> 8) & 0xFF) as u8;
-                buffer[i * 3 + 2] = (colors[i] & 0xFF) as u8;
+            for s in 0..64 {
+                let row = s / 32;
+                let col = s % 32;
+                let (tiles, tile_index, pattern_table_addr) = {
+                    let tile_index = d.oam[s * 4 + 1] as usize;
+                    if d.tall_sprites_enabled {
+                        let pattern_table_addr = (tile_index & 0x01) * 0x1000;
+                        (2, tile_index & !0x01, pattern_table_addr)
+                    } else {
+                        let sprite_pattern_table_addr = (d.background_chr_bank + 4) % 8 * 0x400;
+                        (1, tile_index, sprite_pattern_table_addr)
+                    }
+                };
+                let attributes = d.oam[s * 4 + 2];
+                let palette = (attributes & 0x03) + 4;
+                let flip_vert = attributes & 0x80 != 0;
+                let flip_hori = attributes & 0x40 != 0;
+                for t in 0..tiles {
+                    for i in 0..8 {
+                        for j in 0..8 {
+                            let ci = if flip_vert { 7 - i } else { i };
+                            let cj = if flip_hori { j } else { 7 - j };
+                            let addr = pattern_table_addr + (tile_index | t) * 16 + ci;
+                            let bank_index = addr / 0x400;
+                            let bank_offset = addr % 0x400;
+                            let val = (d.chr_banks[bank_index][bank_offset] >> cj) & 0x01
+                                | (d.chr_banks[bank_index][bank_offset + 8] >> cj & 0x01) << 1;
+                            let color_index = if val == 0 {
+                                d.palettes[0] as usize
+                            } else {
+                                d.palettes[(palette * 4 + val) as usize] as usize
+                            };
+                            let buffer_index = (32 * ((2 * row + t) * 64 + i * 8) + col * 8 + j) * 3;
+                            buffer[buffer_index] = ((d.colors[color_index] >> 16) & 0xFF) as u8;
+                            buffer[buffer_index + 1] = ((d.colors[color_index] >> 8) & 0xFF) as u8;
+                            buffer[buffer_index + 2] = (d.colors[color_index] & 0xFF) as u8;
+                        }
+                    }
+                }
             }
         })
-        .map_err(|err| Error::from_description("locking colors texture", err))?;
-    Ok(texture)
-}
-
-pub fn get_palettes_texture<'a>(
-    texture_creator: &'a TextureCreator<WindowContext>,
-    colors: &[u32],
-    palettes: &[u8],
-) -> Result<Texture<'a>> {
-    let mut texture = texture_creator
-        .create_texture_streaming(PixelFormatEnum::RGB24, 16, 2)
-        .map_err(|err| Error::new("creating palettes texture", &err))?;
-    texture
-        .with_lock(None, |buffer: &mut [u8], _pitch: usize| {
-            for i in 0..32 {
-                // Handle background color mirroring
-                let color_index = palettes[if i % 4 == 0 { 0 } else { i % 32 }] as usize;
-                buffer[i * 3] = ((colors[color_index] >> 16) & 0xFF) as u8;
-                buffer[i * 3 + 1] = ((colors[color_index] >> 8) & 0xFF) as u8;
-                buffer[i * 3 + 2] = (colors[color_index] & 0xFF) as u8;
-            }
-        })
-        .map_err(|err| Error::from_description("locking palettes texture", err))?;
+        .map_err(|err| Error::from_description("locking oam texture", err))?;
     Ok(texture)
 }

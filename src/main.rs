@@ -376,11 +376,12 @@ fn run() -> Result<()> {
             .map_err(|err| Error::from_description("copying output texture to canvas", err))?;
 
         if debug_enabled {
-            let colors = unsafe { slice::from_raw_parts(nes.colors(), 64) };
-            let colors_rect = Rect::new(512, 480, 16 * 16, 16 * 4);
+            let debug_data = graphics::DebugData::new(&nes);
+
+            let colors_rect = Rect::new(512, 480, 32 * 16, 32 * 4);
             canvas
                 .copy(
-                    &graphics::get_colors_texture(&texture_creator, &colors)?,
+                    &graphics::get_colors_texture(&texture_creator, &debug_data)?,
                     None,
                     Some(colors_rect),
                 )
@@ -389,33 +390,27 @@ fn run() -> Result<()> {
                 .draw_rect(colors_rect)
                 .map_err(|err| Error::from_description("drawing colors border", err))?;
 
-            let palettes = unsafe { slice::from_raw_parts(nes.palettes(), 32) };
+            let palettes_rect = Rect::new(512, 480 + 32 * 4, 32 * 16, 32 * 2);
             canvas
                 .copy(
-                    &graphics::get_palettes_texture(&texture_creator, &colors, &palettes)?,
+                    &graphics::get_palettes_texture(&texture_creator, &debug_data)?,
                     None,
-                    Some(Rect::new(512 + 16 * 16, 480, 16 * 16, 16 * 2)),
+                    Some(palettes_rect),
                 )
                 .map_err(|err| {
                     Error::from_description("copying palettes texture to canvas", err)
                 })?;
-
-            let mut chr_banks = Vec::with_capacity(8);
-            for bank_index in 0..8 {
-                chr_banks.push(unsafe { slice::from_raw_parts(nes.chr_bank(bank_index), 0x400) });
-            }
+            canvas
+                .draw_rect(palettes_rect)
+                .map_err(|err| Error::from_description("drawing palettes border", err))?;
 
             for bank_index in 0..4 {
-                let nametable_bank =
-                    unsafe { slice::from_raw_parts(nes.nametable_bank(bank_index), 0x800) };
                 canvas
                     .copy(
                         &graphics::get_nametable_texture(
                             &texture_creator,
-                            colors,
-                            palettes,
-                            &chr_banks[nes.background_chr_bank()..],
-                            nametable_bank,
+                            &debug_data,
+                            bank_index,
                         )?,
                         None,
                         Some(Rect::new(
@@ -435,8 +430,8 @@ fn run() -> Result<()> {
                     .copy(
                         &graphics::get_pattern_table_texture(
                             &texture_creator,
-                            &chr_banks,
-                            table_index * 0x1000,
+                            &debug_data,
+                            table_index,
                         )?,
                         None,
                         Some(Rect::new(table_index as i32 * 256, 480, 256, 256)),
@@ -445,6 +440,21 @@ fn run() -> Result<()> {
                         Error::from_description("copying pattern table texture to canvas", err)
                     })?;
             }
+
+            let oam_rect = Rect::new(512, 480 + 32 * 6, 16 * 32, 16 * 4);
+            canvas
+                .copy(
+                    &graphics::get_oam_texture(
+                        &texture_creator,
+                        &debug_data,
+                    )?,
+                    None,
+                    Some(oam_rect),
+                )
+                .map_err(|err| Error::from_description("copying oam texture to canvas", err))?;
+            canvas
+                .draw_rect(oam_rect)
+                .map_err(|err| Error::from_description("drawing palettes border", err))?;
         }
 
         canvas.present();

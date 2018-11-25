@@ -7,7 +7,7 @@ edition = "2018"
 [dependencies]
 clap = "2.32"
 log = "0.4"
-neso = { git = "https://github.com/jeffrey-xiao/neso-rs" }
+neso = "0.4.1"
 sdl2 = "0.31.0"
 serde = "1.0"
 serde_derive = "1.0"
