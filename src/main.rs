@@ -1,17 +1,8 @@
-extern crate clap;
-extern crate neso;
-extern crate sdl2;
-#[macro_use]
-extern crate log;
-#[macro_use]
-extern crate serde_derive;
-extern crate simplelog;
-extern crate toml;
-
 mod config;
 mod graphics;
 
 use clap::{App, Arg};
+use log::{error, info, warn};
 use neso::Nes;
 use sdl2::audio::AudioSpecDesired;
 use sdl2::event::Event;
@@ -71,13 +62,13 @@ impl error::Error for Error {
         &self.description
     }
 
-    fn cause(&self) -> Option<&error::Error> {
+    fn cause(&self) -> Option<&dyn error::Error> {
         None
     }
 }
 
 impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Error in {} - {}", self.context, self.details)
     }
 }

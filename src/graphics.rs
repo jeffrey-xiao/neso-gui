@@ -49,7 +49,7 @@ impl<'a> DebugData<'a> {
 
 pub fn get_colors_texture<'a>(
     texture_creator: &'a TextureCreator<WindowContext>,
-    d: &DebugData,
+    d: &DebugData<'_>,
 ) -> Result<Texture<'a>> {
     let cols = 16;
     let rows = 4;
@@ -70,7 +70,7 @@ pub fn get_colors_texture<'a>(
 
 pub fn get_palettes_texture<'a>(
     texture_creator: &'a TextureCreator<WindowContext>,
-    d: &DebugData,
+    d: &DebugData<'_>,
 ) -> Result<Texture<'a>> {
     let cols = 16;
     let rows = 2;
@@ -93,7 +93,7 @@ pub fn get_palettes_texture<'a>(
 
 pub fn get_pattern_table_texture<'a>(
     texture_creator: &'a TextureCreator<WindowContext>,
-    d: &DebugData,
+    d: &DebugData<'_>,
     table_index: usize,
 ) -> Result<Texture<'a>> {
     let cols = 16;
@@ -130,7 +130,7 @@ pub fn get_pattern_table_texture<'a>(
 
 pub fn get_nametable_texture<'a>(
     texture_creator: &'a TextureCreator<WindowContext>,
-    d: &DebugData,
+    d: &DebugData<'_>,
     bank_index: usize,
 ) -> Result<Texture<'a>> {
     let cols = 32;
@@ -176,7 +176,7 @@ pub fn get_nametable_texture<'a>(
 
 pub fn get_oam_texture<'a>(
     texture_creator: &'a TextureCreator<WindowContext>,
-    d: &DebugData,
+    d: &DebugData<'_>,
 ) -> Result<Texture<'a>> {
     let cols = 32;
     let rows = 4;

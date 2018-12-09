@@ -1,6 +1,8 @@
+use log::warn;
 use sdl2::controller::Button;
 use sdl2::keyboard::Keycode;
 use serde::de::{Deserialize, Deserializer, Error, SeqAccess, Unexpected, Visitor};
+use serde_derive::Deserialize;
 use std::collections::HashMap;
 use std::fmt;
 use std::fs;
@@ -32,7 +34,7 @@ struct RawKeybindingValuesVisitor(PhantomData<RawKeybindingValues>);
 impl<'de> Visitor<'de> for RawKeybindingValuesVisitor {
     type Value = RawKeybindingValues;
 
-    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str("keycode string or list of keycode strings")
     }
 
@@ -206,7 +208,7 @@ impl<'de> Deserialize<'de> for ControllerConfig {
                     return Err(Error::invalid_value(
                         Unexpected::Str(&entry.0),
                         &"a valid controller field",
-                    ))
+                    ));
                 },
             }
         }
@@ -283,7 +285,7 @@ impl<'de> Deserialize<'de> for KeybindingsConfig {
                     return Err(Error::invalid_value(
                         Unexpected::Str(&entry.0),
                         &"a valid controller field",
-                    ))
+                    ));
                 },
             }
         }
