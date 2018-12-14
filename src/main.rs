@@ -473,14 +473,12 @@ fn run() -> Result<()> {
             .create_texture_streaming(PixelFormatEnum::ABGR8888, 256, 240)
             .map_err(|err| Error::new("creating output texture", &err))?;
         texture
-            .with_lock(None, |buffer: &mut [u8], _pitch: usize| {
-                unsafe {
-                    ptr::copy_nonoverlapping(
-                        state.nes.image_buffer(),
-                        buffer.as_mut_ptr(),
-                        240 * 256 * 4,
-                    );
-                }
+            .with_lock(None, |buffer: &mut [u8], _pitch: usize| unsafe {
+                ptr::copy_nonoverlapping(
+                    state.nes.image_buffer(),
+                    buffer.as_mut_ptr(),
+                    240 * 256 * 4,
+                );
             })
             .map_err(|err| Error::from_description("locking output texture", err))?;
         canvas
