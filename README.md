@@ -10,9 +10,9 @@ An SDL2 interface to [`neso-rs`](https://gitlab.com/jeffrey-xiao/neso-rs).
 
 ## Features
 
- - Save file and save state support.
- - Debug views for object attribute memory, nametables, pattern tables, colors, and palette.
- - Different speeds.
+- Save file and save state support.
+- Debug views for object attribute memory, nametables, pattern tables, colors, and palette.
+- Different speeds.
 
 ## Usage
 
@@ -50,7 +50,7 @@ When `neso-gui` is started, it looks for a configuration file in the following o
 General configuration values are set under the `general` section in the configuration file.
 
 | Name        | Description                                                          | Default                                                                    |
-|-------------|----------------------------------------------------------------------|----------------------------------------------------------------------------|
+| ----------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------- |
 | `data_path` | Directory file to store data files. E.G. Save files and save states. | `$XDG_DATA_HOME/neso-gui/` if defined, else `$HOME/.local/share/neso-gui/` |
 
 ### Controller Configuration
@@ -59,7 +59,7 @@ Controller configuration values are set under sections `port-1` and `port-2` in 
 file.
 
 | Name     | Default Keyboard              | Default Controller |
-|----------|-------------------------------|--------------------|
+| -------- | ----------------------------- | ------------------ |
 | `type`   | `Keyboard`                    | `Controller`       |
 | `a`      | `P`                           | `a`                |
 | `b`      | `O`                           | `b`                |
@@ -82,7 +82,7 @@ Other keybinding configuration values are set under the `keybindings` section in
 file.
 
 | Name             | Default Keyboard |
-|------------------|------------------|
+| ---------------- | ---------------- |
 | `type`           | `Keyboard`       |
 | `mute`           | `M`              |
 | `pause`          | `Space`          |
