@@ -203,13 +203,13 @@ impl<'de> Deserialize<'de> for ControllerConfig {
                                 })?;
                         controller_config.keybinding_map.insert(keybinding, index);
                     }
-                },
+                }
                 None => {
                     return Err(Error::invalid_value(
                         Unexpected::Str(&entry.0),
                         &"a valid controller field",
                     ));
-                },
+                }
             }
         }
 
@@ -286,7 +286,7 @@ impl<'de> Deserialize<'de> for KeybindingsConfig {
                         Unexpected::Str(&entry.0),
                         &"a valid controller field",
                     ));
-                },
+                }
             }
         }
 
@@ -334,13 +334,13 @@ fn parse_general_config(config: &mut Config, toml_value: Value) -> super::Result
                     )
                 })?)
                 .to_owned();
-            },
+            }
             _ => {
                 return Err(super::Error::from_description(
                     "parsing config",
                     format!("Unexpected value in `general` table: {}.", toml_entry.0),
                 ));
-            },
+            }
         }
     }
 
@@ -359,7 +359,7 @@ where
             Path::new(xdg_config_home.unwrap_or(&config_home_dir))
                 .join(env!("CARGO_PKG_NAME"))
                 .join(format!("{}.toml", env!("CARGO_PKG_NAME")))
-        },
+        }
     }
 }
 
@@ -424,17 +424,17 @@ impl Config {
                     config.keybindings_config = toml_value
                         .try_into::<KeybindingsConfig>()
                         .map_err(|err| super::Error::new("parsing keybindings config", &err))?;
-                },
+                }
                 "port-1" => {
                     config.controller_configs[0] = toml_value
                         .try_into::<ControllerConfig>()
                         .map_err(|err| super::Error::new("parsing port-1 config", &err))?
-                },
+                }
                 "port-2" => {
                     config.controller_configs[0] = toml_value
                         .try_into::<ControllerConfig>()
                         .map_err(|err| super::Error::new("parsing port-2 config", &err))?
-                },
+                }
                 _ => warn!("Unexpected value in root of config: {}.", toml_key),
             }
         }

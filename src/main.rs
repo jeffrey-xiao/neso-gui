@@ -378,7 +378,7 @@ fn run() -> Result<()> {
                     info!("[GUI] Opened controller: {}", c.name());
                     _controller = Some(c);
                     break;
-                },
+                }
                 Err(err) => error!("[GUI] Failed to open controller: {}", err),
             }
         }
@@ -432,30 +432,30 @@ fn run() -> Result<()> {
             match event {
                 Event::Quit { .. } => {
                     state.stop()?;
-                },
+                }
                 Event::KeyDown {
                     keycode: Some(keycode),
                     ..
                 } => {
                     let keybinding_value = config::KeybindingValue::KeycodeValue(keycode);
                     state.handle_button_press(keybinding_value)?;
-                },
+                }
                 Event::KeyUp {
                     keycode: Some(keycode),
                     ..
                 } => {
                     let keybinding_value = config::KeybindingValue::KeycodeValue(keycode);
                     state.handle_button_release(keybinding_value);
-                },
+                }
                 Event::ControllerButtonDown { button, .. } => {
                     let keybinding_value = config::KeybindingValue::ButtonValue(button);
                     state.handle_button_press(keybinding_value)?;
-                },
+                }
                 Event::ControllerButtonUp { button, .. } => {
                     let keybinding_value = config::KeybindingValue::ButtonValue(button);
                     state.handle_button_release(keybinding_value);
-                },
-                _ => {},
+                }
+                _ => {}
             }
         }
 
